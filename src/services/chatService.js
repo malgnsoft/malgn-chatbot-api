@@ -117,6 +117,12 @@ export class ChatService {
    * @param {number[]} allowedContentIds - 허용된 콘텐츠 ID 배열 (빈 배열이면 전체 검색)
    */
   async searchSimilarDocuments(queryEmbedding, topK = 5, allowedContentIds = []) {
+    // Vectorize가 로컬에서 지원되지 않는 경우 빈 배열 반환
+    if (!this.env.VECTORIZE?.query) {
+      console.warn('Vectorize not available (local dev)');
+      return [];
+    }
+
     try {
       // 콘텐츠 필터가 있으면 더 많이 검색 후 필터링
       const searchTopK = allowedContentIds.length > 0 ? topK * 3 : topK;

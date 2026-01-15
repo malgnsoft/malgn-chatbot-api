@@ -303,6 +303,68 @@ contents.get('/:id', async (c) => {
 });
 
 /**
+ * PUT /contents/:id
+ * 콘텐츠 수정 (제목 및 내용)
+ */
+contents.put('/:id', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'), 10);
+
+    if (isNaN(id) || id <= 0) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '유효한 콘텐츠 ID가 필요합니다.'
+        }
+      }, 400);
+    }
+
+    const body = await c.req.json();
+    const { title, content } = body;
+
+    if (!title || title.trim().length === 0) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'title 필드는 필수입니다.'
+        }
+      }, 400);
+    }
+
+    const contentService = new ContentService(c.env);
+    const updated = await contentService.updateContent(id, title, content);
+
+    if (!updated) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: '콘텐츠를 찾을 수 없습니다.'
+        }
+      }, 404);
+    }
+
+    return c.json({
+      success: true,
+      data: updated,
+      message: '콘텐츠가 성공적으로 수정되었습니다.'
+    });
+
+  } catch (error) {
+    console.error('Update content error:', error);
+    return c.json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: '콘텐츠 수정 중 오류가 발생했습니다.'
+      }
+    }, 500);
+  }
+});
+
+/**
  * DELETE /contents/:id
  * 콘텐츠 삭제
  */

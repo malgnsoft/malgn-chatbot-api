@@ -56,7 +56,7 @@ export class ContentService {
   async getContent(id) {
     // 콘텐츠 메타데이터 조회 (status = 1만)
     const content = await this.env.DB
-      .prepare('SELECT * FROM TB_CONTENT WHERE id = ? AND status = 1')
+      .prepare('SELECT id, content_nm, filename, file_type, file_size, chunk_count, status, created_at, updated_at FROM TB_CONTENT WHERE id = ? AND status = 1')
       .bind(id)
       .first();
 
@@ -332,10 +332,91 @@ export class ContentService {
       });
     }
 
-    // Vectorize에 배치 삽입
-    if (vectors.length > 0) {
-      await this.env.VECTORIZE.insert(vectors);
+    // Vectorize에 배치 삽입 (로컬에서는 Vectorize가 지원되지 않음)
+    if (vectors.length > 0 && this.env.VECTORIZE?.insert) {
+      try {
+        await this.env.VECTORIZE.insert(vectors);
+      } catch (error) {
+        console.warn('Vectorize insert skipped (local dev):', error.message);
+      }
     }
+  }
+
+  /**
+   * 콘텐츠 수정 (제목 및 내용 수정)
+   */
+  async updateContent(id, title, newContent = null) {
+    if (!title || title.trim().length === 0) {
+      throw new Error('제목은 필수입니다.');
+    }
+
+    // 콘텐츠 존재 확인 (status = 1만)
+    const existingContent = await this.env.DB
+      .prepare('SELECT id, file_type FROM TB_CONTENT WHERE id = ? AND status = 1')
+      .bind(id)
+      .first();
+
+    if (!existingContent) {
+      return null;
+    }
+
+    const contentTitle = title.trim();
+
+    // 내용이 변경된 경우 청크 재생성
+    if (newContent && newContent.trim().length > 0) {
+      const trimmedContent = newContent.trim();
+
+      // 새 청크 분할
+      const chunks = this.embeddingService.splitIntoChunks(trimmedContent);
+      if (chunks.length === 0) {
+        throw new Error('유효한 내용이 없습니다.');
+      }
+
+      // 기존 청크 ID 목록 조회 (Vectorize에서 삭제용)
+      const { results: oldChunks } = await this.env.DB
+        .prepare('SELECT id FROM TB_CHUNK WHERE content_id = ? AND status = 1')
+        .bind(id)
+        .all();
+
+      // Vectorize에서 기존 벡터 삭제
+      if (oldChunks && oldChunks.length > 0 && this.env.VECTORIZE?.deleteByIds) {
+        try {
+          const chunkIds = oldChunks.map(c => String(c.id));
+          await this.env.VECTORIZE.deleteByIds(chunkIds);
+        } catch (error) {
+          console.warn('Vectorize delete skipped (local dev):', error.message);
+        }
+      }
+
+      // 기존 청크 soft delete
+      await this.env.DB
+        .prepare('UPDATE TB_CHUNK SET status = -1 WHERE content_id = ?')
+        .bind(id)
+        .run();
+
+      // 콘텐츠 메타데이터 업데이트
+      const contentSize = new TextEncoder().encode(trimmedContent).length;
+      await this.env.DB
+        .prepare(`
+          UPDATE TB_CONTENT
+          SET content_nm = ?, file_size = ?, chunk_count = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `)
+        .bind(contentTitle, contentSize, chunks.length, id)
+        .run();
+
+      // 새 청크 처리 및 임베딩 생성
+      await this.processChunks(id, contentTitle, chunks);
+    } else {
+      // 제목만 업데이트
+      await this.env.DB
+        .prepare('UPDATE TB_CONTENT SET content_nm = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .bind(contentTitle, id)
+        .run();
+    }
+
+    // 업데이트된 콘텐츠 반환
+    return await this.getContent(id);
   }
 
   /**
@@ -358,10 +439,14 @@ export class ContentService {
       .bind(id)
       .all();
 
-    // Vectorize에서 벡터 삭제
-    if (chunks && chunks.length > 0) {
-      const chunkIds = chunks.map(c => String(c.id));
-      await this.env.VECTORIZE.deleteByIds(chunkIds);
+    // Vectorize에서 벡터 삭제 (로컬에서는 Vectorize가 지원되지 않음)
+    if (chunks && chunks.length > 0 && this.env.VECTORIZE?.deleteByIds) {
+      try {
+        const chunkIds = chunks.map(c => String(c.id));
+        await this.env.VECTORIZE.deleteByIds(chunkIds);
+      } catch (error) {
+        console.warn('Vectorize delete skipped (local dev):', error.message);
+      }
     }
 
     // 청크 soft delete (status = -1)

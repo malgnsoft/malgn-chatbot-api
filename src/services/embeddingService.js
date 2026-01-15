@@ -41,24 +41,40 @@ export class EmbeddingService {
 
   /**
    * 여러 텍스트를 임베딩 벡터로 변환 (배치 처리)
+   * 토큰 제한을 피하기 위해 작은 배치로 나누어 처리합니다.
    * @param {string[]} texts - 변환할 텍스트 배열
+   * @param {number} batchSize - 한 번에 처리할 텍스트 수 (기본값: 10)
    * @returns {Promise<number[][]>} - 벡터 배열
    */
-  async embedBatch(texts) {
+  async embedBatch(texts, batchSize = 10) {
     if (!texts || texts.length === 0) {
       throw new Error('텍스트 배열이 비어있습니다.');
     }
 
     try {
-      const result = await this.env.AI.run(this.model, {
-        text: texts
-      });
+      const allEmbeddings = [];
 
-      if (result.data && result.data.length > 0) {
-        return result.data;
+      // 텍스트를 작은 배치로 나누어 처리
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const batch = texts.slice(i, i + batchSize);
+        console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(texts.length / batchSize)} (${batch.length} texts)`);
+
+        const result = await this.env.AI.run(this.model, {
+          text: batch
+        });
+
+        if (result.data && result.data.length > 0) {
+          allEmbeddings.push(...result.data);
+        } else {
+          throw new Error(`배치 ${Math.floor(i / batchSize) + 1} 임베딩 결과가 없습니다.`);
+        }
       }
 
-      throw new Error('임베딩 결과가 없습니다.');
+      if (allEmbeddings.length !== texts.length) {
+        throw new Error(`임베딩 수(${allEmbeddings.length})가 입력 텍스트 수(${texts.length})와 일치하지 않습니다.`);
+      }
+
+      return allEmbeddings;
     } catch (error) {
       console.error('Batch embedding error:', error);
       throw new Error(`배치 임베딩 생성 실패: ${error.message}`);
