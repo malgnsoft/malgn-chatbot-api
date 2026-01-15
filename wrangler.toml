@@ -47,11 +47,11 @@ database_id = "cafb4778-93be-4b85-ba19-78f6b7161f1d"
 binding = "KV"
 id = "41fca93af7a84d53947590f5335caa0b"
 
-# R2 Bucket (Original file storage - optional)
-# Create with: wrangler r2 bucket create chatbot-files
+# R2 Bucket (Original file storage)
+# Create with: wrangler r2 bucket create malgn-chatbot-files
 [[r2_buckets]]
 binding = "BUCKET"
-bucket_name = "chatbot-files"
+bucket_name = "malgn-chatbot-files"
 
 # ============================================
 # Environment Variables
@@ -78,8 +78,8 @@ bucket_name = "chatbot-files"
 #    wrangler kv namespace create "malgn-chatbot-kv"
 #    -> Copy the id to this file
 #
-# 4. Create R2 bucket (optional):
-#    wrangler r2 bucket create chatbot-files
+# 4. Create R2 bucket:
+#    wrangler r2 bucket create malgn-chatbot-files
 #
 # 5. Apply D1 schema:
 #    wrangler d1 execute malgn-chatbot-db --local --file=./schema.sql
