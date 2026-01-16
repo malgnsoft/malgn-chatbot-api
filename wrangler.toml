@@ -29,7 +29,8 @@ binding = "AI"
 id = "malgn-chatbot"
 
 # Vectorize (Vector Database for RAG)
-# Create with: wrangler vectorize create malgn-chatbot-vectors --dimensions=768 --metric=cosine
+# OpenAI text-embedding-3-small uses 1536 dimensions
+# Create with: wrangler vectorize create malgn-chatbot-vectors --dimensions=1536 --metric=cosine
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
@@ -59,9 +60,10 @@ bucket_name = "malgn-chatbot-files"
 #
 # LOCAL DEVELOPMENT (.dev.vars):
 #   ENVIRONMENT=development
+#   OPENAI_API_KEY=sk-xxx
 #
 # PRODUCTION (Wrangler Secrets):
-#   No secrets required for basic operation
+#   wrangler secret put OPENAI_API_KEY
 #
 # ============================================
 # Setup Commands (Run once)
@@ -71,7 +73,7 @@ bucket_name = "malgn-chatbot-files"
 #    wrangler d1 create malgn-chatbot-db
 #    -> Copy the database_id to this file
 #
-# 2. Create Vectorize index:
+# 2. Create Vectorize index (1536 dimensions for OpenAI text-embedding-3-small):
 #    wrangler vectorize create malgn-chatbot-vectors --dimensions=1536 --metric=cosine
 #
 # 3. Create KV namespace:

@@ -13,7 +13,8 @@ export class ChatService {
   constructor(env) {
     this.env = env;
     this.embeddingService = new EmbeddingService(env);
-    this.llmModel = '@cf/meta/llama-3.1-8b-instruct';
+    this.llmModel = 'gpt-4o-mini';
+    this.apiUrl = 'https://api.openai.com/v1/chat/completions';
 
     // 기본 AI 설정
     this.persona = '당신은 친절하고 전문적인 AI 튜터입니다.';
@@ -183,7 +184,7 @@ export class ChatService {
   }
 
   /**
-   * LLM으로 응답 생성
+   * LLM으로 응답 생성 (OpenAI API 사용)
    */
   async generateResponse(question, context) {
     const systemPrompt = `${this.persona}
@@ -205,17 +206,36 @@ ${context}
 위 문서를 참고하여 질문에 답변해 주세요.`;
 
     try {
-      const result = await this.env.AI.run(this.llmModel, {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        max_tokens: this.maxTokens,
-        temperature: this.temperature,
-        top_p: this.topP
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.llmModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: this.maxTokens,
+          temperature: this.temperature,
+          top_p: this.topP
+        })
       });
 
-      return result.response || '응답을 생성할 수 없습니다.';
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error?.message || 'OpenAI API 오류');
+      }
+
+      const result = await response.json();
+
+      if (result.choices && result.choices.length > 0) {
+        return result.choices[0].message.content;
+      }
+
+      return '응답을 생성할 수 없습니다.';
     } catch (error) {
       console.error('LLM generation error:', error);
       throw new Error('AI 응답 생성에 실패했습니다.');
