@@ -22,11 +22,15 @@ export class LearningService {
    * @returns {Promise<Object>} - 생성된 제목, 학습 목표, 요약, 추천 질문
    */
   async generateAndStoreLearningData(sessionId, contentIds, settings = {}) {
+    console.log('[LearningService] Starting generateAndStoreLearningData', { sessionId, contentIds, settings });
+
     // 콘텐츠에서 텍스트 및 제목 추출
     const { context, contentTitles } = await this.getContentContext(contentIds);
+    console.log('[LearningService] Content context:', { contextLength: context?.length || 0, contentTitles });
 
     if (!context || context.trim().length === 0) {
       // 컨텍스트가 없어도 콘텐츠 제목으로 세션 제목 생성
+      console.log('[LearningService] No context found, using default session name');
       const defaultSessionNm = contentTitles.length > 0
         ? contentTitles.slice(0, 2).join(', ') + (contentTitles.length > 2 ? ' 외' : '')
         : '새 대화';
@@ -34,10 +38,14 @@ export class LearningService {
     }
 
     // 제목, 학습 목표, 요약, 추천 질문 생성 (AI 설정 적용)
+    console.log('[LearningService] Generating learning data with OpenAI...');
     const learningData = await this.generateLearningData(context, contentTitles, settings);
+    console.log('[LearningService] Generated learning data:', JSON.stringify(learningData, null, 2));
 
     // DB에 저장
+    console.log('[LearningService] Saving to DB...');
     await this.saveLearningDataToDB(sessionId, learningData);
+    console.log('[LearningService] Saved to DB successfully');
 
     // Vectorize에 임베딩 저장
     await this.storeLearningEmbeddings(sessionId, learningData, contentIds);
@@ -126,7 +134,8 @@ ${context}`;
       });
 
       if (!response.ok) {
-        console.error('Learning data generation failed');
+        const errorText = await response.text();
+        console.error('[LearningService] OpenAI API failed:', response.status, errorText);
         const defaultSessionNm = contentTitles.length > 0
           ? contentTitles.slice(0, 2).join(', ') + (contentTitles.length > 2 ? ' 외' : '')
           : '새 대화';
