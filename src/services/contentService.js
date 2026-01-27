@@ -546,6 +546,15 @@ export class ContentService {
     const sample = text.substring(0, 500);
     console.log('[ContentService] Validating text sample:', sample.substring(0, 100));
 
+    // PDF 메타데이터 패턴 감지 (toMarkdown 결과의 메타데이터)
+    if (sample.startsWith('document.pdf\nMetadata\n') ||
+        sample.includes('PDFFormatVersion=') ||
+        sample.includes('IsLinearized=') ||
+        sample.includes('IsAcroFormPresent=')) {
+      console.warn('[ContentService] PDF metadata detected in text');
+      return false;
+    }
+
     // PDF 구조 패턴 감지 (이 패턴이 있으면 실제 텍스트가 아님)
     const pdfStructurePatterns = [
       /^%\s*%/,                          // PDF 헤더
@@ -607,8 +616,22 @@ export class ContentService {
         console.log('[ContentService] AI toMarkdown result:', result.format, result.data?.length || 0);
 
         if (result.format === 'markdown' && result.data) {
+          let rawText = result.data;
+
+          // 메타데이터 블록 제거 (document.pdf\nMetadata\n...Contents\n 형식)
+          const contentsIndex = rawText.indexOf('\n\nContents\n');
+          if (contentsIndex !== -1) {
+            rawText = rawText.substring(contentsIndex + '\n\nContents\n'.length);
+          } else if (rawText.startsWith('document.pdf\nMetadata\n')) {
+            // Contents 마커가 없는 경우, 메타데이터 끝까지 제거
+            const metadataEndIndex = rawText.indexOf('\n\n', 100);
+            if (metadataEndIndex !== -1) {
+              rawText = rawText.substring(metadataEndIndex + 2);
+            }
+          }
+
           // Markdown에서 텍스트 추출 (헤더, 리스트 등 마크다운 문법 제거)
-          const text = result.data
+          const text = rawText
             .replace(/^#+\s*/gm, '')        // 헤더 제거
             .replace(/^\s*[-*+]\s*/gm, '')   // 리스트 마커 제거
             .replace(/\*\*|__/g, '')         // 볼드 제거

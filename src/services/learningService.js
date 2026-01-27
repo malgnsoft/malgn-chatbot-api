@@ -191,6 +191,28 @@ ${context}`;
         recommendedQuestions = recommendedQuestions.slice(0, recommendCount);
       }
 
+      // 템플릿 텍스트 필터링 (AI가 예시를 그대로 복사한 경우)
+      const templatePatterns = ['~란/은/는', '~의 특징', '~에는 어떤'];
+      if (Array.isArray(recommendedQuestions)) {
+        const hasTemplateText = recommendedQuestions.some(q =>
+          templatePatterns.some(p => q.includes(p))
+        );
+        if (hasTemplateText) {
+          console.warn('[LearningService] Template text detected in questions, setting to null');
+          recommendedQuestions = null;
+        }
+      }
+
+      if (Array.isArray(learningSummary)) {
+        const hasTemplateText = learningSummary.some(s =>
+          s.startsWith('요약 ') && /요약 \d+/.test(s)
+        );
+        if (hasTemplateText) {
+          console.warn('[LearningService] Template text detected in summary, setting to null');
+          learningSummary = null;
+        }
+      }
+
       return {
         sessionNm: data.title || defaultSessionNm,
         learningGoal: data.learningGoal || null,
