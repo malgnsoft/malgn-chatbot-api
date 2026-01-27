@@ -11,7 +11,10 @@ export class LearningService {
     this.env = env;
     this.embeddingService = new EmbeddingService(env);
     this.model = 'gpt-4o-mini';
-    this.apiUrl = 'https://api.openai.com/v1/chat/completions';
+    // AI Gateway를 통해 OpenAI 호출 (지역 제한 우회)
+    this.apiUrl = env.AI_GATEWAY_URL
+      ? `${env.AI_GATEWAY_URL}/openai/v1/chat/completions`
+      : 'https://api.openai.com/v1/chat/completions';
   }
 
   /**

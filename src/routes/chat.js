@@ -82,7 +82,7 @@ chat.post('/', async (c) => {
     });
 
   } catch (error) {
-    console.error('Chat error:', error);
+    console.error('Chat error:', error.message, error.stack);
 
     // AI 관련 에러
     if (error.message.includes('AI') || error.message.includes('임베딩')) {
@@ -90,7 +90,8 @@ chat.post('/', async (c) => {
         success: false,
         error: {
           code: 'AI_ERROR',
-          message: 'AI 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'
+          message: 'AI 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+          detail: error.message
         }
       }, 500);
     }

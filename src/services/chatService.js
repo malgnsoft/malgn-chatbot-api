@@ -14,7 +14,10 @@ export class ChatService {
     this.env = env;
     this.embeddingService = new EmbeddingService(env);
     this.llmModel = 'gpt-4o-mini';
-    this.apiUrl = 'https://api.openai.com/v1/chat/completions';
+    // AI Gateway를 통해 OpenAI 호출 (지역 제한 우회)
+    this.apiUrl = env.AI_GATEWAY_URL
+      ? `${env.AI_GATEWAY_URL}/openai/v1/chat/completions`
+      : 'https://api.openai.com/v1/chat/completions';
 
     // 기본 AI 설정
     this.persona = '당신은 친절하고 전문적인 AI 튜터입니다.';
@@ -264,8 +267,9 @@ ${context}
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'OpenAI API 오류');
+        const errorText = await response.text();
+        console.error('[ChatService] OpenAI API error:', response.status, errorText);
+        throw new Error(`OpenAI API 오류: ${response.status}`);
       }
 
       const result = await response.json();

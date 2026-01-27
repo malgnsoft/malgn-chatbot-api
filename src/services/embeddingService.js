@@ -10,7 +10,10 @@ export class EmbeddingService {
   constructor(env) {
     this.env = env;
     this.model = 'text-embedding-3-small';
-    this.apiUrl = 'https://api.openai.com/v1/embeddings';
+    // AI Gateway를 통해 OpenAI 호출 (지역 제한 우회)
+    this.apiUrl = env.AI_GATEWAY_URL
+      ? `${env.AI_GATEWAY_URL}/openai/v1/embeddings`
+      : 'https://api.openai.com/v1/embeddings';
   }
 
   /**
