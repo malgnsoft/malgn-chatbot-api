@@ -17,7 +17,6 @@ export default {
   ],
   tags: [
     { name: 'General', description: '기본 엔드포인트' },
-    { name: 'Auth', description: '인증' },
     { name: 'Chat', description: '채팅 API' },
     { name: 'Contents', description: '콘텐츠(학습 자료) 관리' },
     { name: 'Sessions', description: '채팅 세션 관리' },
@@ -69,60 +68,6 @@ export default {
               }
             }
           }
-        }
-      }
-    },
-    '/auth/login': {
-      post: {
-        summary: '로그인',
-        description: '사용자명과 비밀번호로 로그인하여 JWT 토큰을 발급받습니다.',
-        tags: ['Auth'],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['username', 'password'],
-                properties: {
-                  username: { type: 'string', example: 'admin' },
-                  password: { type: 'string', example: 'password' }
-                }
-              }
-            }
-          }
-        },
-        responses: {
-          '200': {
-            description: '로그인 성공',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    success: { type: 'boolean', example: true },
-                    data: {
-                      type: 'object',
-                      properties: {
-                        token: { type: 'string', description: 'JWT 토큰' },
-                        user: {
-                          type: 'object',
-                          properties: {
-                            id: { type: 'string' },
-                            username: { type: 'string' },
-                            role: { type: 'string' }
-                          }
-                        },
-                        expiresIn: { type: 'string', example: '24h' }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          '400': { $ref: '#/components/responses/ValidationError' },
-          '401': { $ref: '#/components/responses/Unauthorized' }
         }
       }
     },
@@ -789,8 +734,7 @@ export default {
       bearerAuth: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'JWT',
-        description: 'JWT 토큰을 입력하세요. POST /auth/login으로 발급받을 수 있습니다.'
+        description: 'API Key를 입력하세요.'
       }
     },
     schemas: {

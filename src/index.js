@@ -13,8 +13,6 @@ import { swaggerUI } from '@hono/swagger-ui';
 import chatRoutes from './routes/chat.js';
 import contentsRoutes from './routes/contents.js';
 import sessionsRoutes from './routes/sessions.js';
-import authRoutes from './routes/auth.js';
-
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -34,13 +32,12 @@ app.use('*', cors({
   allowHeaders: ['Content-Type', 'Authorization']
 }));
 
-// 보호 경로에 JWT 인증 미들웨어 적용
+// 보호 경로에 API Key 인증 미들웨어 적용
 app.use('/chat/*', authMiddleware);
 app.use('/contents/*', authMiddleware);
 app.use('/sessions/*', authMiddleware);
 
 // Routes
-app.route('/auth', authRoutes);
 app.route('/chat', chatRoutes);
 app.route('/contents', contentsRoutes);
 app.route('/sessions', sessionsRoutes);
