@@ -1,87 +1,126 @@
+# ============================================
+# Malgn Chatbot API - Multi-tenant Configuration
+# ============================================
+#
+# 구조: 하나의 코드베이스, 테넌트별 리소스 분리
+# 배포: wrangler deploy --env <tenant_id>
+#
+# ============================================
+
 name = "malgn-chatbot-api"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Environment variables (non-sensitive)
+# ============================================
+# Local Development (기본 환경)
+# wrangler dev 실행 시 사용
+# ============================================
+
 [vars]
 ENVIRONMENT = "development"
+TENANT_ID = "dev"
 
-# Development environment
-[env.dev]
-name = "malgn-chatbot-api-dev"
-vars = { ENVIRONMENT = "development" }
-
-# Production environment
-[env.production]
-name = "malgn-chatbot-api-prod"
-vars = { ENVIRONMENT = "production" }
-
-# ============================================
-# Cloudflare Bindings Configuration
-# ============================================
-
-# Workers AI (Embeddings)
-# 사용 모델: @cf/baai/bge-base-en-v1.5 (768 dimensions)
-# 지역 제한 없이 안정적으로 동작
 [ai]
 binding = "AI"
 
-# Vectorize (Vector Database for RAG)
-# Workers AI bge-base-en-v1.5 uses 768 dimensions
-# Create with: wrangler vectorize create malgn-chatbot-vectors --dimensions=768 --metric=cosine
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "malgn-chatbot-vectors"
-
-# D1 Database (SQLite - Document metadata)
-# Create with: wrangler d1 create malgn-chatbot-db
 [[d1_databases]]
 binding = "DB"
 database_name = "malgn-chatbot-db"
 database_id = "cafb4778-93be-4b85-ba19-78f6b7161f1d"
 
-# KV Namespace (Cache and Session storage)
-# Create with: wrangler kv namespace create "malgn-chatbot-kv"
 [[kv_namespaces]]
 binding = "KV"
 id = "41fca93af7a84d53947590f5335caa0b"
 
-# R2 Bucket (Original file storage)
-# Create with: wrangler r2 bucket create malgn-chatbot-files
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "malgn-chatbot-files"
 
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors"
+
 # ============================================
-# Environment Variables
+# Tenant: user1 (기존 리소스 사용)
+# 배포: wrangler deploy --env user1
+# URL: malgn-chatbot-api-user1.workers.dev
+# ============================================
+
+[env.user1]
+name = "malgn-chatbot-api-user1"
+vars = { ENVIRONMENT = "production", TENANT_ID = "user1" }
+
+[env.user1.ai]
+binding = "AI"
+
+[[env.user1.d1_databases]]
+binding = "DB"
+database_name = "malgn-chatbot-db"
+database_id = "cafb4778-93be-4b85-ba19-78f6b7161f1d"
+
+[[env.user1.kv_namespaces]]
+binding = "KV"
+id = "41fca93af7a84d53947590f5335caa0b"
+
+[[env.user1.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files"
+
+[[env.user1.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors"
+
+# ============================================
+# Tenant: user2
+# 배포: wrangler deploy --env user2
+# URL: malgn-chatbot-api-user2.workers.dev
+# ============================================
+
+[env.user2]
+name = "malgn-chatbot-api-user2"
+vars = { ENVIRONMENT = "production", TENANT_ID = "user2" }
+
+[env.user2.ai]
+binding = "AI"
+
+[[env.user2.d1_databases]]
+binding = "DB"
+database_name = "malgn-chatbot-db-user2"
+database_id = "80ef8a40-6a62-4159-96ab-d46f611d7756"
+
+[[env.user2.kv_namespaces]]
+binding = "KV"
+id = "a1433a99c86749f086aeec603eeb9a86"
+
+[[env.user2.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files-user2"
+
+[[env.user2.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors-user2"
+
+# ============================================
+# 새 테넌트 추가 방법
 # ============================================
 #
-# LOCAL DEVELOPMENT (.dev.vars):
-#   ENVIRONMENT=development
-#   OPENAI_API_KEY=sk-xxx
+# 1. Cloudflare 리소스 생성:
+#    wrangler d1 create malgn-chatbot-db-<tenant_id>
+#    wrangler kv namespace create malgn-chatbot-kv-<tenant_id>
+#    wrangler r2 bucket create malgn-chatbot-files-<tenant_id>
+#    wrangler vectorize create malgn-chatbot-vectors-<tenant_id> --dimensions=768 --metric=cosine
 #
-# PRODUCTION (Wrangler Secrets):
-#   wrangler secret put OPENAI_API_KEY
+# 2. 위 템플릿을 복사하여 [env.<tenant_id>] 섹션 추가
+#    - 생성된 리소스 ID를 해당 섹션에 입력
+#
+# 3. D1 스키마 적용:
+#    wrangler d1 execute malgn-chatbot-db-<tenant_id> --file=./schema.sql
+#
+# 4. 시크릿 설정:
+#    wrangler secret put OPENAI_API_KEY --env <tenant_id>
+#
+# 5. 배포:
+#    wrangler deploy --env <tenant_id>
 #
 # ============================================
-# Setup Commands (Run once)
-# ============================================
-#
-# 1. Create D1 database:
-#    wrangler d1 create malgn-chatbot-db
-#    -> Copy the database_id to this file
-#
-# 2. Create Vectorize index (768 dimensions for Workers AI bge-base-en-v1.5):
-#    wrangler vectorize create malgn-chatbot-vectors --dimensions=768 --metric=cosine
-#
-# 3. Create KV namespace:
-#    wrangler kv namespace create "malgn-chatbot-kv"
-#    -> Copy the id to this file
-#
-# 4. Create R2 bucket:
-#    wrangler r2 bucket create malgn-chatbot-files
-#
-# 5. Apply D1 schema:
-#    wrangler d1 execute malgn-chatbot-db --local --file=./schema.sql
-#    wrangler d1 execute malgn-chatbot-db --file=./schema.sql  # for remote
