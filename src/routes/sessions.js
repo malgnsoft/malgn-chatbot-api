@@ -222,7 +222,8 @@ sessions.post('/', async (c) => {
         lastMessage: null,
         messageCount: 0,
         created_at: session.created_at,
-        updated_at: session.updated_at
+        updated_at: session.updated_at,
+        _debug: learningData.error ? { learningError: learningData.error } : undefined
       },
       message: '새 세션이 생성되었습니다.'
     }, 201);

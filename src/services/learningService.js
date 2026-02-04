@@ -10,8 +10,8 @@ export class LearningService {
   constructor(env) {
     this.env = env;
     this.embeddingService = new EmbeddingService(env);
-    // Workers AI 사용 (지역 제한 없음)
-    this.model = '@cf/meta/llama-3.1-8b-instruct';
+    // Workers AI 사용 - 70B 모델로 더 큰 컨텍스트 지원
+    this.model = '@cf/meta/llama-3.1-70b-instruct';
   }
 
   /**
@@ -55,9 +55,13 @@ export class LearningService {
 
   /**
    * 콘텐츠에서 컨텍스트 텍스트 및 제목 추출
+   * Workers AI 토큰 제한으로 인해 컨텍스트 길이를 제한합니다.
    */
   async getContentContext(contentIds) {
     const placeholders = contentIds.map(() => '?').join(',');
+    // Workers AI (Llama 3.1 70B) - 더 큰 컨텍스트 지원
+    // 약 16000 토큰 = 약 32000~48000자 (한국어 기준)
+    const MAX_CONTEXT_LENGTH = 32000;
 
     // 콘텐츠 제목 및 내용 조회
     const { results: contentResults } = await this.env.DB
@@ -70,7 +74,13 @@ export class LearningService {
       .all();
 
     const contentTitles = (contentResults || []).map(r => r.content_nm);
-    const context = (contentResults || []).map(r => r.content).filter(c => c).join('\n\n');
+    let context = (contentResults || []).map(r => r.content).filter(c => c).join('\n\n');
+
+    // 컨텍스트 길이 제한
+    if (context.length > MAX_CONTEXT_LENGTH) {
+      console.log(`[LearningService] Context truncated from ${context.length} to ${MAX_CONTEXT_LENGTH} characters`);
+      context = context.substring(0, MAX_CONTEXT_LENGTH) + '\n\n[내용이 길어 일부만 표시됨...]';
+    }
 
     return { context, contentTitles };
   }
@@ -146,6 +156,9 @@ ${context}`;
 
     try {
       // Workers AI 사용
+      console.log('[LearningService] Calling Workers AI with model:', this.model);
+      console.log('[LearningService] User prompt length:', userPrompt.length);
+
       const result = await this.env.AI.run(this.model, {
         messages: [
           { role: 'system', content: systemPrompt },
@@ -155,8 +168,10 @@ ${context}`;
         temperature: temperature
       });
 
+      console.log('[LearningService] Workers AI result:', JSON.stringify(result));
+
       if (!result || !result.response) {
-        console.error('[LearningService] Workers AI failed: no response');
+        console.error('[LearningService] Workers AI failed: no response', result);
         const defaultSessionNm = contentTitles.length > 0
           ? contentTitles.slice(0, 2).join(', ') + (contentTitles.length > 2 ? ' 외' : '')
           : '새 대화';
@@ -220,11 +235,11 @@ ${context}`;
         recommendedQuestions: recommendedQuestions
       };
     } catch (error) {
-      console.error('Learning data generation error:', error);
+      console.error('[LearningService] Learning data generation error:', error.message, error.stack);
       const defaultSessionNm = contentTitles.length > 0
         ? contentTitles.slice(0, 2).join(', ') + (contentTitles.length > 2 ? ' 외' : '')
         : '새 대화';
-      return { sessionNm: defaultSessionNm, learningGoal: null, learningSummary: null, recommendedQuestions: null };
+      return { sessionNm: defaultSessionNm, learningGoal: null, learningSummary: null, recommendedQuestions: null, error: error.message };
     }
   }
 
