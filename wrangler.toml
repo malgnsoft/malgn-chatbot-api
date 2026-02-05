@@ -23,6 +23,7 @@ TENANT_ID = "dev"
 
 [ai]
 binding = "AI"
+gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[d1_databases]]
 binding = "DB"
@@ -53,6 +54,7 @@ vars = { ENVIRONMENT = "production", TENANT_ID = "user1" }
 
 [env.user1.ai]
 binding = "AI"
+gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user1.d1_databases]]
 binding = "DB"
@@ -83,6 +85,7 @@ vars = { ENVIRONMENT = "production", TENANT_ID = "user2" }
 
 [env.user2.ai]
 binding = "AI"
+gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user2.d1_databases]]
 binding = "DB"
