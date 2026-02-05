@@ -421,6 +421,7 @@ contents.put('/:id', async (c) => {
 /**
  * POST /contents/:id/quizzes
  * 특정 콘텐츠에 대해 퀴즈 재생성
+ * Body: { choiceCount?: number, oxCount?: number } 또는 { count?: number }
  */
 contents.post('/:id/quizzes', async (c) => {
   try {
@@ -436,8 +437,31 @@ contents.post('/:id/quizzes', async (c) => {
       }, 400);
     }
 
+    // 요청 본문에서 퀴즈 옵션 추출
+    let quizOptions = { choiceCount: 3, oxCount: 2 };
+    try {
+      const body = await c.req.json();
+      // 새로운 형식: choiceCount, oxCount
+      if (body.choiceCount !== undefined || body.oxCount !== undefined) {
+        quizOptions = {
+          choiceCount: Math.max(0, Math.min(10, body.choiceCount ?? 3)),
+          oxCount: Math.max(0, Math.min(10, body.oxCount ?? 2))
+        };
+      }
+      // 하위 호환: count만 전달된 경우
+      else if (body.count) {
+        const totalCount = Math.max(1, Math.min(20, body.count));
+        quizOptions = {
+          choiceCount: Math.ceil(totalCount / 2),
+          oxCount: totalCount - Math.ceil(totalCount / 2)
+        };
+      }
+    } catch {
+      // 기본값 사용
+    }
+
     const contentService = new ContentService(c.env);
-    const result = await contentService.regenerateQuizzes(id);
+    const result = await contentService.regenerateQuizzes(id, quizOptions);
 
     if (!result) {
       return c.json({

@@ -617,12 +617,24 @@ sessions.post('/:id/quizzes', async (c) => {
       }, 400);
     }
 
-    // 요청 본문에서 퀴즈 수 추출
-    let quizCount = session.quiz_count;
+    // 요청 본문에서 퀴즈 옵션 추출
+    let quizOptions = { choiceCount: 3, oxCount: 2 };
     try {
       const body = await c.req.json();
-      if (body.count) {
-        quizCount = Math.max(1, Math.min(20, body.count));
+      // 새로운 형식: choiceCount, oxCount
+      if (body.choiceCount !== undefined || body.oxCount !== undefined) {
+        quizOptions = {
+          choiceCount: Math.max(0, Math.min(10, body.choiceCount ?? 3)),
+          oxCount: Math.max(0, Math.min(10, body.oxCount ?? 2))
+        };
+      }
+      // 하위 호환: count만 전달된 경우
+      else if (body.count) {
+        const totalCount = Math.max(1, Math.min(20, body.count));
+        quizOptions = {
+          choiceCount: Math.ceil(totalCount / 2),
+          oxCount: totalCount - Math.ceil(totalCount / 2)
+        };
       }
     } catch {
       // 기본값 사용
@@ -641,7 +653,7 @@ sessions.post('/:id/quizzes', async (c) => {
         const quizzes = await quizService.generateQuizzesForContent(
           content.id,
           content.content,
-          quizCount
+          quizOptions
         );
         allQuizzes.push(...quizzes);
       }

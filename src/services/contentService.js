@@ -366,11 +366,16 @@ export class ContentService {
 
   /**
    * 콘텐츠에 대한 퀴즈 생성
+   * @param {number} contentId - 콘텐츠 ID
+   * @param {string} contentText - 콘텐츠 텍스트
+   * @param {Object} quizOptions - 퀴즈 옵션
+   * @param {number} quizOptions.choiceCount - 4지선다 퀴즈 수 (기본 3개)
+   * @param {number} quizOptions.oxCount - OX 퀴즈 수 (기본 2개)
    */
-  async generateQuizForContent(contentId, contentText, quizCount = 5) {
+  async generateQuizForContent(contentId, contentText, quizOptions = {}) {
     try {
       console.log('[ContentService] Generating quiz for content', contentId);
-      await this.quizService.generateQuizzesForContent(contentId, contentText, quizCount);
+      await this.quizService.generateQuizzesForContent(contentId, contentText, quizOptions);
     } catch (error) {
       console.error('[ContentService] Quiz generation error:', error);
       throw error;
@@ -386,8 +391,12 @@ export class ContentService {
 
   /**
    * 콘텐츠 퀴즈 재생성 (기존 퀴즈 삭제 후 새로 생성)
+   * @param {number} contentId - 콘텐츠 ID
+   * @param {Object} quizOptions - 퀴즈 옵션
+   * @param {number} quizOptions.choiceCount - 4지선다 퀴즈 수 (기본 3개)
+   * @param {number} quizOptions.oxCount - OX 퀴즈 수 (기본 2개)
    */
-  async regenerateQuizzes(contentId, quizCount = 5) {
+  async regenerateQuizzes(contentId, quizOptions = {}) {
     // 콘텐츠 존재 확인
     const content = await this.env.DB
       .prepare('SELECT id, content FROM TB_CONTENT WHERE id = ? AND status = 1')
@@ -406,7 +415,7 @@ export class ContentService {
     await this.quizService.deleteQuizzesByContent(contentId);
 
     // 새 퀴즈 생성 (동기적으로 실행하여 결과 반환)
-    const quizzes = await this.quizService.generateQuizzesForContent(contentId, content.content, quizCount);
+    const quizzes = await this.quizService.generateQuizzesForContent(contentId, content.content, quizOptions);
 
     return {
       contentId,
@@ -417,8 +426,11 @@ export class ContentService {
 
   /**
    * 모든 콘텐츠에 대해 퀴즈 재생성 (퀴즈가 없는 콘텐츠만)
+   * @param {Object} quizOptions - 퀴즈 옵션
+   * @param {number} quizOptions.choiceCount - 4지선다 퀴즈 수 (기본 3개)
+   * @param {number} quizOptions.oxCount - OX 퀴즈 수 (기본 2개)
    */
-  async regenerateAllQuizzes(quizCount = 5) {
+  async regenerateAllQuizzes(quizOptions = {}) {
     // 퀴즈가 없는 콘텐츠 조회
     const { results: contentsWithoutQuizzes } = await this.env.DB
       .prepare(`
@@ -455,7 +467,7 @@ export class ContentService {
         }
 
         console.log(`[regenerateAllQuizzes] Generating quizzes for content ${content.id} (${content.content_nm})`);
-        const quizzes = await this.quizService.generateQuizzesForContent(content.id, content.content, quizCount);
+        const quizzes = await this.quizService.generateQuizzesForContent(content.id, content.content, quizOptions);
 
         if (quizzes.length > 0) {
           generated++;

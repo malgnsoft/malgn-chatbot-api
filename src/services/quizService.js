@@ -18,10 +18,12 @@ export class QuizService {
    * 콘텐츠 기반으로 퀴즈 생성 (콘텐츠 업로드 시 호출)
    * @param {number} contentId - 콘텐츠 ID
    * @param {string} content - 콘텐츠 텍스트
-   * @param {number} quizCount - 생성할 퀴즈 수 (기본 5개)
+   * @param {Object|number} quizOptions - 퀴즈 옵션 또는 총 퀴즈 수 (하위 호환)
+   * @param {number} quizOptions.choiceCount - 4지선다 퀴즈 수 (기본 3개)
+   * @param {number} quizOptions.oxCount - OX 퀴즈 수 (기본 2개)
    * @returns {Promise<Object[]>} - 생성된 퀴즈 배열
    */
-  async generateQuizzesForContent(contentId, content, quizCount = 5) {
+  async generateQuizzesForContent(contentId, content, quizOptions = {}) {
     if (!content || content.trim().length === 0) {
       console.log('[QuizService] No content provided, skipping quiz generation');
       return [];
@@ -33,11 +35,18 @@ export class QuizService {
       return [];
     }
 
-    console.log('[QuizService] Generating quizzes for content', contentId, 'count:', quizCount);
+    // 하위 호환: 숫자로 전달되면 기존 방식으로 처리
+    let choiceCount, oxCount;
+    if (typeof quizOptions === 'number') {
+      const totalCount = quizOptions;
+      choiceCount = Math.ceil(totalCount / 2);
+      oxCount = totalCount - choiceCount;
+    } else {
+      choiceCount = quizOptions.choiceCount ?? 3;
+      oxCount = quizOptions.oxCount ?? 2;
+    }
 
-    // 퀴즈 생성 (4지선다와 OX 혼합)
-    const choiceCount = Math.ceil(quizCount / 2);
-    const oxCount = quizCount - choiceCount;
+    console.log('[QuizService] Generating quizzes for content', contentId, 'choice:', choiceCount, 'ox:', oxCount);
 
     const quizzes = [];
 
@@ -180,7 +189,7 @@ ${context.substring(0, 4000)}`;
   }
 
   /**
-   * OX 퀴즈 생성
+   * OX 퀴즈 생성 (최대 3회 재시도)
    */
   async generateOXQuizzes(context, count) {
     const systemPrompt = `당신은 교육 콘텐츠 전문가입니다. 주어진 내용을 바탕으로 OX 퀴즈를 생성해 주세요.
@@ -207,40 +216,122 @@ ${context.substring(0, 4000)}`;
   "explanation": "구는 두 개 이상의 단어들의 연결이지만, 주어와 동사가 반드시 필요하지 않습니다. 주어와 동사가 있으면 절이 됩니다."
 }
 
+★★★ 나쁜 OX 퀴즈 예시 (이렇게 만들지 마세요) ★★★
+{
+  "question": "문학이란?",  <- 의문문은 O/X로 판단할 수 없음
+  ...
+}
+{
+  "question": "다음 중 올바른 것은?",  <- 선택형 질문은 O/X 퀴즈가 아님
+  ...
+}
+{
+  "question": "문학의 정의",  <- 명사구는 서술문이 아님
+  ...
+}
+
 규칙:
 1. answer는 "O" 또는 "X"입니다
-2. 문제는 완전한 서술문으로 작성하세요 (예: "~은/는 ~이다.")
-3. 참/거짓이 명확하게 판단 가능해야 합니다
-4. O와 X 문제를 적절히 섞어서 출제하세요
-5. 제공된 내용에 기반한 문제만 출제하세요
-6. 한국어로 작성하세요
-7. JSON 배열만 출력하세요`;
+2. ★★★ 중요: 문제는 반드시 "~이다.", "~한다.", "~있다." 등으로 끝나는 완전한 서술문이어야 합니다
+3. ★★★ 금지: 물음표(?), "~이란", "~란 무엇", "다음 중" 등 의문문/선택형 질문 절대 금지
+4. 참/거짓이 명확하게 판단 가능해야 합니다
+5. O와 X 문제를 적절히 섞어서 출제하세요
+6. 제공된 내용에 기반한 문제만 출제하세요
+7. 한국어로 작성하세요
+8. JSON 배열만 출력하세요`;
 
     const userPrompt = `다음 내용을 바탕으로 OX 퀴즈 ${count}개를 생성해 주세요.
 - O와 X 문제를 골고루 섞어주세요
-- 완전한 서술문 형태로 작성
+- 반드시 "~이다.", "~한다." 등으로 끝나는 서술문으로 작성
+- 물음표(?)로 끝나는 의문문 절대 금지
 
 내용:
 ${context.substring(0, 4000)}`;
 
-    try {
-      const content = await this.callWorkersAI(systemPrompt, userPrompt);
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const content = await this.callWorkersAI(systemPrompt, userPrompt);
 
-      // JSON 파싱 (```json ... ``` 제거)
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      const quizzes = JSON.parse(jsonMatch ? jsonMatch[0] : '[]');
+        // JSON 파싱 (```json ... ``` 제거)
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        const quizzes = JSON.parse(jsonMatch ? jsonMatch[0] : '[]');
 
-      return quizzes.map(q => ({
-        quiz_type: 'ox',
-        question: q.question,
-        options: null,
-        answer: q.answer,
-        explanation: q.explanation
-      }));
-    } catch (error) {
-      console.error('OX quiz generation error:', error);
-      return [];
+        // 유효성 검증: 의문문 필터링
+        const valid = quizzes
+          .filter(q => this.isValidOXQuestion(q.question) && (q.answer === 'O' || q.answer === 'X'))
+          .map(q => ({
+            quiz_type: 'ox',
+            question: q.question,
+            options: null,
+            answer: q.answer,
+            explanation: q.explanation
+          }));
+
+        if (valid.length > 0) {
+          console.log(`[QuizService] OX quiz attempt ${attempt}: ${valid.length}/${count} valid`);
+          return valid;
+        }
+
+        console.warn(`[QuizService] OX quiz attempt ${attempt}: no valid quizzes, retrying...`);
+      } catch (error) {
+        console.error(`[QuizService] OX quiz attempt ${attempt} error:`, error.message);
+      }
     }
+
+    console.error('[QuizService] OX quiz generation failed after', maxRetries, 'attempts');
+    return [];
+  }
+
+  /**
+   * OX 퀴즈 질문 유효성 검증
+   * - 의문문(?)이 아닌 서술문이어야 함
+   * - "~이다", "~한다", "~있다", "~없다", "~된다" 등으로 끝나야 함
+   */
+  isValidOXQuestion(question) {
+    if (!question || typeof question !== 'string') {
+      return false;
+    }
+
+    const trimmed = question.trim();
+
+    // 의문문 패턴 필터링
+    const invalidPatterns = [
+      /\?$/,                    // 물음표로 끝남
+      /이란\??$/,               // "~이란" 또는 "~이란?"
+      /란\s*무엇/,              // "~란 무엇"
+      /무엇인가/,               // "~무엇인가"
+      /^다음\s*중/,             // "다음 중~"
+      /어느\s*것/,              // "어느 것"
+      /고르시오/,               // "~고르시오"
+      /선택하시오/,             // "~선택하시오"
+    ];
+
+    for (const pattern of invalidPatterns) {
+      if (pattern.test(trimmed)) {
+        return false;
+      }
+    }
+
+    // 서술문 패턴 확인 (마침표로 끝나거나 서술형 어미로 끝남)
+    const validEndings = [
+      /다\.?$/,                 // "~다" 또는 "~다."
+      /이다\.?$/,               // "~이다" 또는 "~이다."
+      /한다\.?$/,               // "~한다"
+      /있다\.?$/,               // "~있다"
+      /없다\.?$/,               // "~없다"
+      /된다\.?$/,               // "~된다"
+      /않는다\.?$/,             // "~않는다"
+      /아니다\.?$/,             // "~아니다"
+    ];
+
+    for (const pattern of validEndings) {
+      if (pattern.test(trimmed)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
