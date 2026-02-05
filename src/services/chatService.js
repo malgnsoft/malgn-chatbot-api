@@ -32,6 +32,38 @@ export class ChatService {
   }
 
   /**
+   * 세션의 이전 대화 내역 조회
+   * @param {number} sessionId - 세션 ID
+   * @param {number} limit - 최대 조회 개수 (기본 10개 = 5턴)
+   * @returns {Promise<Array>} - 대화 내역 배열 [{role, content}, ...]
+   */
+  async getChatHistory(sessionId, limit = 10) {
+    if (!sessionId) return [];
+
+    try {
+      const { results } = await this.env.DB
+        .prepare(`
+          SELECT role, content
+          FROM TB_MESSAGE
+          WHERE session_id = ? AND status = 1
+          ORDER BY created_at DESC
+          LIMIT ?
+        `)
+        .bind(sessionId, limit)
+        .all();
+
+      // 최신순으로 조회했으므로 역순으로 정렬하여 시간순으로 반환
+      return (results || []).reverse().map(r => ({
+        role: r.role,
+        content: r.content
+      }));
+    } catch (error) {
+      console.error('Get chat history error:', error);
+      return [];
+    }
+  }
+
+  /**
    * 세션에 연결된 콘텐츠 ID 목록 조회
    * @param {number} sessionId - 세션 ID
    * @returns {Promise<number[]>} - 콘텐츠 ID 배열 (빈 배열이면 전체 검색)
@@ -104,13 +136,17 @@ export class ChatService {
       context = await this.buildContext(searchResults);
     }
 
-    // 5. LLM으로 응답 생성
-    const response = await this.generateResponse(message, context);
+    // 5. 이전 대화 내역 조회 (최근 10개 메시지)
+    const chatHistory = await this.getChatHistory(currentSessionId, 10);
+    console.log('[ChatService] Chat history loaded:', chatHistory.length, 'messages');
 
-    // 6. 참조 문서 정보 구성
+    // 6. LLM으로 응답 생성 (이전 대화 포함)
+    const response = await this.generateResponse(message, context, chatHistory);
+
+    // 7. 참조 문서 정보 구성
     const sources = this.formatSources(searchResults);
 
-    // 7. 메시지를 DB에 저장 (사용자 메시지 + AI 응답)
+    // 8. 메시지를 DB에 저장 (사용자 메시지 + AI 응답)
     if (currentSessionId) {
       await this.saveMessagesToDB(currentSessionId, message, response);
     }
@@ -272,8 +308,11 @@ export class ChatService {
 
   /**
    * LLM으로 응답 생성 (Workers AI 사용)
+   * @param {string} question - 현재 질문
+   * @param {string} context - RAG 컨텍스트
+   * @param {Array} chatHistory - 이전 대화 내역 [{role, content}, ...]
    */
-  async generateResponse(question, context) {
+  async generateResponse(question, context, chatHistory = []) {
     const systemPrompt = `${this.persona}
 
 규칙:
@@ -281,24 +320,34 @@ export class ChatService {
 2. 문서에 없는 내용은 추측하지 마세요.
 3. 답변은 친절하고 명확하게 해주세요.
 4. 한국어로 답변하세요.
-5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.`;
+5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
+6. 이전 대화 내용을 참고하여 맥락에 맞는 답변을 해주세요.
 
-    const userPrompt = `참고 문서:
-${context}
+참고 문서:
+${context}`;
 
----
+    // 메시지 배열 구성: system → 이전 대화 → 현재 질문
+    const messages = [
+      { role: 'system', content: systemPrompt }
+    ];
 
-질문: ${question}
+    // 이전 대화 내역 추가
+    if (chatHistory && chatHistory.length > 0) {
+      for (const msg of chatHistory) {
+        messages.push({
+          role: msg.role,
+          content: msg.content
+        });
+      }
+    }
 
-위 문서를 참고하여 질문에 답변해 주세요.`;
+    // 현재 질문 추가
+    messages.push({ role: 'user', content: question });
 
     try {
       // Workers AI 사용
       const result = await this.env.AI.run(this.llmModel, {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
+        messages,
         max_tokens: this.maxTokens,
         temperature: this.temperature
       });
