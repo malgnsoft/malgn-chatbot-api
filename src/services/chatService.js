@@ -322,6 +322,8 @@ export class ChatService {
 4. 한국어로 답변하세요.
 5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
 6. 이전 대화 내용을 참고하여 맥락에 맞는 답변을 해주세요.
+7. 학습자가 틀린 내용을 말하면 반드시 정정해 주세요. 절대로 틀린 내용에 동조하지 마세요. 문서를 근거로 올바른 정보를 알려주세요.
+8. "~이 맞아?", "~이 맞나요?" 같은 확인 질문에는 문서 내용과 대조하여 맞는지 틀린지 정확히 판단하세요.
 
 참고 문서:
 ${context}`;
@@ -414,6 +416,97 @@ ${context}`;
       console.error('Save messages to DB error:', error);
       // 메시지 저장 실패해도 응답은 반환 (에러를 throw하지 않음)
     }
+  }
+
+  /**
+   * 스트리밍 채팅 응답 생성
+   * RAG 처리 후 LLM 스트리밍 응답을 반환합니다.
+   * @param {string} message - 사용자 질문
+   * @param {number|null} sessionId - 세션 ID
+   * @param {Object} settings - AI 설정
+   * @returns {Promise<Object>} - { messages, sources, sessionId, searchResults }
+   */
+  async prepareChatContext(message, sessionId = null, settings = {}) {
+    if (!message || message.trim().length === 0) {
+      throw new Error('메시지가 비어있습니다.');
+    }
+
+    // AI 설정 적용
+    if (settings.persona) this.persona = settings.persona;
+    if (settings.temperature !== undefined) this.temperature = settings.temperature;
+    if (settings.topP !== undefined) this.topP = settings.topP;
+    if (settings.maxTokens !== undefined) this.maxTokens = settings.maxTokens;
+
+    const currentSessionId = sessionId;
+
+    // 병렬 처리: 콘텐츠 ID 조회 + 질문 임베딩 동시 실행
+    const [allowedContentIds, queryEmbedding] = await Promise.all([
+      this.getSessionContentIds(currentSessionId),
+      this.embeddingService.embed(message)
+    ]);
+
+    // Vectorize에서 유사 콘텐츠 검색
+    const searchResults = await this.searchSimilarDocuments(queryEmbedding, 5, allowedContentIds, currentSessionId);
+
+    // 컨텍스트 구성
+    let context = '';
+    if (searchResults.length === 0) {
+      console.log('[ChatService] No search results, trying session learning data fallback');
+      context = await this.getSessionLearningContext(currentSessionId, allowedContentIds);
+
+      if (!context) {
+        return { noContext: true, sessionId: currentSessionId, sources: [] };
+      }
+    } else {
+      context = await this.buildContext(searchResults);
+    }
+
+    // 대화 내역 조회
+    const chatHistory = await this.getChatHistory(currentSessionId, 10);
+    console.log('[ChatService] Chat history loaded:', chatHistory.length, 'messages');
+
+    // LLM 메시지 배열 구성
+    const systemPrompt = `${this.persona}
+
+규칙:
+1. 오직 제공된 문서 정보만을 바탕으로 답변하세요.
+2. 문서에 없는 내용은 추측하지 마세요.
+3. 답변은 친절하고 명확하게 해주세요.
+4. 한국어로 답변하세요.
+5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
+6. 이전 대화 내용을 참고하여 맥락에 맞는 답변을 해주세요.
+7. 학습자가 틀린 내용을 말하면 반드시 정정해 주세요. 절대로 틀린 내용에 동조하지 마세요. 문서를 근거로 올바른 정보를 알려주세요.
+8. "~이 맞아?", "~이 맞나요?" 같은 확인 질문에는 문서 내용과 대조하여 맞는지 틀린지 정확히 판단하세요.
+
+참고 문서:
+${context}`;
+
+    const messages = [{ role: 'system', content: systemPrompt }];
+    if (chatHistory && chatHistory.length > 0) {
+      for (const msg of chatHistory) {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
+    messages.push({ role: 'user', content: message });
+
+    const sources = this.formatSources(searchResults);
+
+    return { messages, sources, sessionId: currentSessionId, noContext: false };
+  }
+
+  /**
+   * LLM 스트리밍 응답 생성 (Workers AI stream: true)
+   * @param {Array} messages - LLM 메시지 배열
+   * @returns {ReadableStream} - SSE 형식의 스트림
+   */
+  async generateResponseStream(messages) {
+    const result = await this.env.AI.run(this.llmModel, {
+      messages,
+      max_tokens: this.maxTokens,
+      temperature: this.temperature,
+      stream: true
+    });
+    return result;
   }
 
   /**
