@@ -131,11 +131,13 @@ chat.post('/stream', async (c) => {
   }
 
   const chatService = new ChatService(c.env);
+  const streamStart = Date.now();
 
   // RAG 컨텍스트 준비 (임베딩, 벡터 검색, 대화 내역)
   let prepared;
   try {
     prepared = await chatService.prepareChatContext(message.trim(), sessionId, settings || {});
+    console.log(`[PERF] RAG 준비 완료: ${Date.now() - streamStart}ms`);
   } catch (error) {
     console.error('Chat stream prepare error:', error.message);
     return c.json({
@@ -161,12 +163,15 @@ chat.post('/stream', async (c) => {
   // LLM 스트리밍 응답 생성
   return streamSSE(c, async (stream) => {
     try {
+      const llmStart = Date.now();
       const aiStream = await chatService.generateResponseStream(prepared.messages);
+      console.log(`[PERF] LLM 스트림 시작: ${Date.now() - llmStart}ms`);
 
       // Workers AI SSE 스트림 파싱 및 재전송
       const reader = aiStream.pipeThrough(new TextDecoderStream()).getReader();
       let fullResponse = '';
       let buffer = '';
+      let firstToken = true;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -185,12 +190,18 @@ chat.post('/stream', async (c) => {
           try {
             const parsed = JSON.parse(dataStr);
             if (parsed.response) {
+              if (firstToken) {
+                console.log(`[PERF] 첫 토큰까지: ${Date.now() - llmStart}ms (요청 시작부터: ${Date.now() - streamStart}ms)`);
+                firstToken = false;
+              }
               fullResponse += parsed.response;
               await stream.writeSSE({ event: 'token', data: JSON.stringify({ response: parsed.response }) });
             }
           } catch { /* skip invalid JSON */ }
         }
       }
+
+      console.log(`[PERF] LLM 전체: ${Date.now() - llmStart}ms, 총 요청: ${Date.now() - streamStart}ms`);
 
       // 완료 이벤트 전송
       await stream.writeSSE({ event: 'done', data: JSON.stringify({ sources: prepared.sources, sessionId: prepared.sessionId }) });

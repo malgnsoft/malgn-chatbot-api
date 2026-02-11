@@ -460,12 +460,15 @@ ${context}`;
     if (settings.maxTokens !== undefined) this.maxTokens = settings.maxTokens;
 
     const currentSessionId = sessionId;
+    const t0 = Date.now();
 
     // 병렬 처리: 콘텐츠 ID 조회 + 질문 임베딩 동시 실행
     const [allowedContentIds, queryEmbedding] = await Promise.all([
       this.getSessionContentIds(currentSessionId),
       this.embeddingService.embed(message)
     ]);
+    const t1 = Date.now();
+    console.log(`[PERF] 1단계 콘텐츠ID+임베딩: ${t1 - t0}ms`);
 
     // 벡터 검색 + 퀴즈 컨텍스트 + 대화 내역을 모두 병렬 실행
     const [searchResults, quizContext, chatHistory] = await Promise.all([
@@ -473,7 +476,8 @@ ${context}`;
       this.getQuizContext(allowedContentIds),
       this.getChatHistory(currentSessionId, 6)
     ]);
-    console.log('[ChatService] Chat history loaded:', chatHistory.length, 'messages');
+    const t2 = Date.now();
+    console.log(`[PERF] 2단계 벡터검색+퀴즈+대화내역: ${t2 - t1}ms`);
 
     // 컨텍스트 구성
     let context = '';
@@ -488,6 +492,9 @@ ${context}`;
       context = await this.buildContext(searchResults);
     }
     if (quizContext) context += quizContext;
+    const t3 = Date.now();
+    console.log(`[PERF] 3단계 컨텍스트 구성: ${t3 - t2}ms`);
+    console.log(`[PERF] prepareChatContext 총: ${t3 - t0}ms`);
 
     // LLM 메시지 배열 구성
     const systemPrompt = `${this.persona}
