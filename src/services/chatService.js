@@ -102,6 +102,119 @@ export class ChatService {
   }
 
   /**
+   * 세션의 학습 메타데이터 조회 (학습 목표, 요약, 추천 질문)
+   * 자식 세션이면 부모 세션의 데이터를 반환
+   * @param {number} sessionId - 세션 ID
+   * @returns {Promise<{learningGoal: string|null, learningSummary: string|null, recommendedQuestions: string|null}>}
+   */
+  async getSessionLearningData(sessionId) {
+    if (!sessionId) return { learningGoal: null, learningSummary: null, recommendedQuestions: null };
+
+    try {
+      const session = await this.env.DB
+        .prepare('SELECT parent_id, learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND status = 1')
+        .bind(sessionId)
+        .first();
+
+      if (!session) return { learningGoal: null, learningSummary: null, recommendedQuestions: null };
+
+      let source = session;
+      if (session.parent_id > 0) {
+        const parent = await this.env.DB
+          .prepare('SELECT learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND status = 1')
+          .bind(session.parent_id)
+          .first();
+        if (parent) source = parent;
+      }
+
+      return {
+        learningGoal: source.learning_goal || null,
+        learningSummary: source.learning_summary || null,
+        recommendedQuestions: source.recommended_questions || null
+      };
+    } catch (error) {
+      console.error('Get session learning data error:', error);
+      return { learningGoal: null, learningSummary: null, recommendedQuestions: null };
+    }
+  }
+
+  /**
+   * 시스템 프롬프트 구성 (중앙화)
+   * @param {Object} options
+   * @param {string} options.context - RAG 검색 결과 컨텍스트
+   * @param {string|null} options.learningGoal - 학습 목표
+   * @param {string|null} options.learningSummary - 학습 요약 (JSON string)
+   * @param {string|null} options.recommendedQuestions - 추천 질문 (JSON string)
+   * @param {string} options.quizContext - 퀴즈 정답 정보
+   * @returns {string} - 완성된 시스템 프롬프트
+   */
+  buildSystemPrompt({ context, learningGoal, learningSummary, recommendedQuestions, quizContext }) {
+    const parts = [];
+
+    // 1. 역할/페르소나
+    parts.push(`<role>\n${this.persona}\n</role>`);
+
+    // 2. 학습 맥락 (DB에서 직접 조회 - 항상 포함)
+    const learningParts = [];
+    if (learningGoal) {
+      learningParts.push(`학습 목표: ${learningGoal}`);
+    }
+    if (learningSummary) {
+      try {
+        const items = JSON.parse(learningSummary);
+        if (Array.isArray(items) && items.length > 0) {
+          learningParts.push(`핵심 요약:\n${items.map((s, i) => `${i + 1}. ${s}`).join('\n')}`);
+        }
+      } catch {
+        learningParts.push(`핵심 요약: ${learningSummary}`);
+      }
+    }
+    if (recommendedQuestions) {
+      try {
+        const questions = JSON.parse(recommendedQuestions);
+        if (Array.isArray(questions) && questions.length > 0) {
+          learningParts.push(`추천 질문 (학습자가 이런 질문을 할 수 있음):\n${questions.map(q => `- ${q}`).join('\n')}`);
+        }
+      } catch {
+        // skip if parse fails
+      }
+    }
+    if (learningParts.length > 0) {
+      parts.push(`<learning_context>\n${learningParts.join('\n\n')}\n</learning_context>`);
+    }
+
+    // 3. 규칙
+    parts.push(`<rules>
+1. 오직 제공된 문서 정보만을 바탕으로 답변하세요.
+2. 문서에 없는 내용은 추측하지 마세요.
+3. 답변은 친절하고 명확하게 해주세요.
+4. 한국어로 답변하세요.
+5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
+6. 이전 대화 내용을 참고하여 맥락에 맞는 답변을 해주세요.
+7. 학습자가 틀린 내용을 말하면 반드시 정정해 주세요. 절대로 틀린 내용에 동조하지 마세요. 문서를 근거로 올바른 정보를 알려주세요.
+8. "~이 맞아?", "~이 맞나요?" 같은 확인 질문에는 문서 내용과 대조하여 맞는지 틀린지 정확히 판단하세요.
+</rules>`);
+
+    // 4. 출력 형식 가이드
+    parts.push(`<output_format>
+- 핵심 내용은 **굵게** 강조하세요.
+- 여러 항목을 설명할 때는 번호 목록(1. 2. 3.)이나 불릿(-) 목록을 사용하세요.
+- 복잡한 개념은 단계별로 나누어 설명하세요.
+- 짧고 명확한 문장을 사용하세요.
+</output_format>`);
+
+    // 5. 참고 문서 (RAG 컨텍스트)
+    parts.push(`<reference_documents>\n${context}\n</reference_documents>`);
+
+    // 6. 퀴즈 정보 (있을 때만)
+    if (quizContext) {
+      parts.push(`<quiz_info>\n${quizContext}\n</quiz_info>`);
+    }
+
+    return parts.join('\n\n');
+  }
+
+  /**
    * 채팅 응답 생성
    * @param {string} message - 사용자 질문
    * @param {number|null} sessionId - 세션 ID (선택적)
@@ -122,18 +235,20 @@ export class ChatService {
     // 세션 ID 사용 (숫자형)
     const currentSessionId = sessionId;
 
-    // 1. 콘텐츠 ID 조회 + 질문 임베딩을 병렬 실행
-    const [contentResult, queryEmbedding] = await Promise.all([
+    // 1. 콘텐츠 ID 조회 + 질문 임베딩 + 학습 데이터를 병렬 실행
+    const [contentResult, queryEmbedding, learningData] = await Promise.all([
       this.getSessionContentIdsAndParent(currentSessionId),
-      this.embeddingService.embed(message)
+      this.embeddingService.embed(message),
+      this.getSessionLearningData(currentSessionId)
     ]);
     const allowedContentIds = contentResult.contentIds;
     const effectiveSessionId = contentResult.effectiveSessionId;
 
-    // 2. 벡터 검색 + 대화 내역을 병렬 실행
-    const [searchResults, chatHistory] = await Promise.all([
+    // 2. 벡터 검색 + 대화 내역 + 퀴즈 컨텍스트를 병렬 실행
+    const [searchResults, chatHistory, quizContext] = await Promise.all([
       this.searchSimilarDocuments(queryEmbedding, 5, allowedContentIds, effectiveSessionId),
-      this.getChatHistory(currentSessionId, 6)
+      this.getChatHistory(currentSessionId, 6),
+      this.getQuizContext(allowedContentIds)
     ]);
     console.log('[ChatService] Chat history loaded:', chatHistory.length, 'messages');
 
@@ -155,7 +270,7 @@ export class ChatService {
     }
 
     // 6. LLM으로 응답 생성 (이전 대화 포함)
-    const response = await this.generateResponse(message, context, chatHistory);
+    const response = await this.generateResponse(message, context, chatHistory, { learningData, quizContext: quizContext || '' });
 
     // 7. 참조 문서 정보 구성
     const sources = this.formatSources(searchResults);
@@ -287,7 +402,7 @@ export class ChatService {
         return line;
       });
 
-      return `\n\n---\n\n[퀴즈 정답 정보 - 학습자 질문에 이 정보를 근거로 정확히 판단하세요]\n${quizLines.join('\n')}`;
+      return `[퀴즈 정답 정보 - 학습자 질문에 이 정보를 근거로 정확히 판단하세요]\n${quizLines.join('\n')}`;
     } catch (error) {
       console.error('Get quiz context error:', error);
       return '';
@@ -360,21 +475,14 @@ export class ChatService {
    * @param {string} context - RAG 컨텍스트
    * @param {Array} chatHistory - 이전 대화 내역 [{role, content}, ...]
    */
-  async generateResponse(question, context, chatHistory = []) {
-    const systemPrompt = `${this.persona}
-
-규칙:
-1. 오직 제공된 문서 정보만을 바탕으로 답변하세요.
-2. 문서에 없는 내용은 추측하지 마세요.
-3. 답변은 친절하고 명확하게 해주세요.
-4. 한국어로 답변하세요.
-5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
-6. 이전 대화 내용을 참고하여 맥락에 맞는 답변을 해주세요.
-7. 학습자가 틀린 내용을 말하면 반드시 정정해 주세요. 절대로 틀린 내용에 동조하지 마세요. 문서를 근거로 올바른 정보를 알려주세요.
-8. "~이 맞아?", "~이 맞나요?" 같은 확인 질문에는 문서 내용과 대조하여 맞는지 틀린지 정확히 판단하세요.
-
-참고 문서:
-${context}`;
+  async generateResponse(question, context, chatHistory = [], { learningData = {}, quizContext = '' } = {}) {
+    const systemPrompt = this.buildSystemPrompt({
+      context,
+      learningGoal: learningData.learningGoal || null,
+      learningSummary: learningData.learningSummary || null,
+      recommendedQuestions: learningData.recommendedQuestions || null,
+      quizContext
+    });
 
     // 메시지 배열 구성: system → 이전 대화 → 현재 질문
     const messages = [
@@ -483,23 +591,25 @@ ${context}`;
     const currentSessionId = sessionId;
     const t0 = Date.now();
 
-    // 병렬 처리: 콘텐츠 ID 조회 + 질문 임베딩 동시 실행
-    const [contentResult, queryEmbedding] = await Promise.all([
+    // 병렬 처리: 콘텐츠 ID 조회 + 질문 임베딩 + 학습 데이터 동시 실행
+    const [contentResult, queryEmbedding, learningData] = await Promise.all([
       this.getSessionContentIdsAndParent(currentSessionId),
-      this.embeddingService.embed(message)
+      this.embeddingService.embed(message),
+      this.getSessionLearningData(currentSessionId)
     ]);
     const allowedContentIds = contentResult.contentIds;
     const effectiveSessionId = contentResult.effectiveSessionId;
     const t1 = Date.now();
-    console.log(`[PERF] 1단계 콘텐츠ID+임베딩: ${t1 - t0}ms`);
+    console.log(`[PERF] 1단계 콘텐츠ID+임베딩+학습데이터: ${t1 - t0}ms`);
 
-    // 벡터 검색 + 대화 내역을 병렬 실행
-    const [searchResults, chatHistory] = await Promise.all([
+    // 벡터 검색 + 대화 내역 + 퀴즈 컨텍스트를 병렬 실행
+    const [searchResults, chatHistory, quizContext] = await Promise.all([
       this.searchSimilarDocuments(queryEmbedding, 5, allowedContentIds, effectiveSessionId),
-      this.getChatHistory(currentSessionId, 6)
+      this.getChatHistory(currentSessionId, 6),
+      this.getQuizContext(allowedContentIds)
     ]);
     const t2 = Date.now();
-    console.log(`[PERF] 2단계 벡터검색+대화내역: ${t2 - t1}ms`);
+    console.log(`[PERF] 2단계 벡터검색+대화내역+퀴즈: ${t2 - t1}ms`);
 
     // 컨텍스트 구성
     let context = '';
@@ -518,20 +628,13 @@ ${context}`;
     console.log(`[PERF] prepareChatContext 총: ${t3 - t0}ms`);
 
     // LLM 메시지 배열 구성
-    const systemPrompt = `${this.persona}
-
-규칙:
-1. 오직 제공된 문서 정보만을 바탕으로 답변하세요.
-2. 문서에 없는 내용은 추측하지 마세요.
-3. 답변은 친절하고 명확하게 해주세요.
-4. 한국어로 답변하세요.
-5. 문서에서 답을 찾을 수 없다면, "제공된 문서에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
-6. 이전 대화 내용을 참고하여 맥락에 맞는 답변을 해주세요.
-7. 학습자가 틀린 내용을 말하면 반드시 정정해 주세요. 절대로 틀린 내용에 동조하지 마세요. 문서를 근거로 올바른 정보를 알려주세요.
-8. "~이 맞아?", "~이 맞나요?" 같은 확인 질문에는 문서 내용과 대조하여 맞는지 틀린지 정확히 판단하세요.
-
-참고 문서:
-${context}`;
+    const systemPrompt = this.buildSystemPrompt({
+      context,
+      learningGoal: learningData.learningGoal,
+      learningSummary: learningData.learningSummary,
+      recommendedQuestions: learningData.recommendedQuestions,
+      quizContext: quizContext || ''
+    });
 
     const messages = [{ role: 'system', content: systemPrompt }];
     if (chatHistory && chatHistory.length > 0) {
