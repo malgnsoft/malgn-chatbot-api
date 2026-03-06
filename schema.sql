@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS TB_CONTENT (
   file_type TEXT NOT NULL,
   file_size INTEGER NOT NULL,
   content TEXT,
+  lesson_id INTEGER,
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS TB_CONTENT (
 -- Index for faster listing by date
 CREATE INDEX IF NOT EXISTS idx_content_created_at ON TB_CONTENT(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_content_status ON TB_CONTENT(status);
+CREATE INDEX IF NOT EXISTS idx_content_lesson_id ON TB_CONTENT(lesson_id);
 
 -- TB_SESSION: 채팅 세션
 CREATE TABLE IF NOT EXISTS TB_SESSION (

@@ -163,7 +163,8 @@ export default {
         security: [{ bearerAuth: [] }],
         parameters: [
           { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호' },
-          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 }, description: '페이지당 개수' }
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 }, description: '페이지당 개수' },
+          { name: 'lesson_id', in: 'query', schema: { type: 'integer' }, description: 'LMS 차시 ID 필터 (선택)' }
         ],
         responses: {
           '200': {
@@ -207,7 +208,8 @@ export default {
                     properties: {
                       type: { type: 'string', enum: ['text'], description: '텍스트 타입' },
                       title: { type: 'string', description: '콘텐츠 제목' },
-                      content: { type: 'string', description: '텍스트 내용 (최소 50자)' }
+                      content: { type: 'string', description: '텍스트 내용 (최소 50자)' },
+                      lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
                     }
                   },
                   {
@@ -216,7 +218,8 @@ export default {
                     properties: {
                       type: { type: 'string', enum: ['link'], description: '링크 타입' },
                       title: { type: 'string', description: '콘텐츠 제목' },
-                      url: { type: 'string', format: 'uri', description: 'URL (HTTP/HTTPS)' }
+                      url: { type: 'string', format: 'uri', description: 'URL (HTTP/HTTPS)' },
+                      lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
                     }
                   }
                 ]
@@ -228,7 +231,8 @@ export default {
                 required: ['file'],
                 properties: {
                   file: { type: 'string', format: 'binary', description: '파일 (PDF≤10MB, TXT/MD/SRT/VTT≤5MB)' },
-                  title: { type: 'string', description: '콘텐츠 제목 (선택, 미입력시 파일명 사용)' }
+                  title: { type: 'string', description: '콘텐츠 제목 (선택, 미입력시 파일명 사용)' },
+                  lesson_id: { type: 'integer', description: 'LMS 차시 ID (선택)' }
                 }
               }
             }
@@ -364,7 +368,8 @@ export default {
                 required: ['title'],
                 properties: {
                   title: { type: 'string', description: '제목' },
-                  content: { type: 'string', description: '내용 (선택, 변경 시 재임베딩)' }
+                  content: { type: 'string', description: '내용 (선택, 변경 시 재임베딩)' },
+                  lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
                 }
               }
             }
@@ -872,6 +877,7 @@ export default {
           filename: { type: 'string', description: '파일명 또는 URL' },
           file_type: { type: 'string', enum: ['pdf', 'txt', 'md', 'srt', 'vtt', 'text', 'link'], description: '파일 유형' },
           file_size: { type: 'integer', description: '파일 크기 (bytes)' },
+          lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
           status: { type: 'integer', description: '상태 (1=활성, 0=비활성, -1=삭제)' },
           created_at: { type: 'string', format: 'date-time' },
           updated_at: { type: 'string', format: 'date-time' }
@@ -886,6 +892,7 @@ export default {
           file_type: { type: 'string' },
           file_size: { type: 'integer' },
           content: { type: 'string', description: '추출된 텍스트 전문' },
+          lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
           status: { type: 'integer' },
           created_at: { type: 'string', format: 'date-time' },
           updated_at: { type: 'string', format: 'date-time' }

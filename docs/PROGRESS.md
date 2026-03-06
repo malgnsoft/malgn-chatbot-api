@@ -103,17 +103,24 @@
 - 동일 parent + course_user_id 조합 시 기존 세션 반환 (중복 방지)
 - `effectiveSessionId`: 자식 세션의 콘텐츠 조회 시 부모 ID 사용
 
+#### 13. 콘텐츠 lesson_id 추가 (migration 004)
+- TB_CONTENT에 `lesson_id` 컬럼 추가 (LMS 차시별 콘텐츠 분류)
+- `POST /contents`: lesson_id 저장 지원 (JSON, FormData)
+- `GET /contents?lesson_id=N`: 차시별 필터링 조회 지원
+- `PUT /contents/:id`: lesson_id 수정 지원
+- OpenAPI 스펙 (ContentSummary, ContentDetail) 반영
+
 ---
 
 ### Phase 4: 프론트엔드
 
-#### 13. 관리자 대시보드
+#### 14. 관리자 대시보드
 - 3컬럼 레이아웃: AI 설정 | 학습 자료 | 채팅 세션
 - Bootstrap 5 + Vanilla JS 싱글톤 모듈 패턴
 - 이벤트 기반 모듈 통신 (`CustomEvent`)
 - 멀티테넌트 전환 UI
 
-#### 14. 임베드 위젯
+#### 15. 임베드 위젯
 - ES6 모듈 → esbuild → IIFE 번들 (`chatbot-embed.js`)
 - Layer 모드: 플로팅 팝업 + FAB 버튼
 - Inline 모드: 지정 컨테이너에 직접 삽입
@@ -125,31 +132,31 @@
 
 ### Phase 5: 인프라 & 품질
 
-#### 15. 멀티테넌트 구조
+#### 16. 멀티테넌트 구조
 - `wrangler.toml`의 `[env.<tenant_id>]` 섹션으로 테넌트별 리소스 분리
 - 현재 테넌트: dev (로컬), user1 (프로덕션, dev와 DB 공유), user2 (프로덕션, 독립 DB)
 - 각 테넌트별 독립: D1, KV, R2, Vectorize, AI Gateway
 
-#### 16. AI Gateway 연동
+#### 17. AI Gateway 연동
 - Cloudflare AI Gateway (`malgn-chatbot`) 경유
 - 캐시 TTL 3600초
 - 모니터링 및 로깅
 
-#### 17. Swagger UI / OpenAPI
+#### 18. Swagger UI / OpenAPI
 - `@hono/swagger-ui` 통합
 - `GET /docs` — Swagger UI 문서
 - `GET /openapi.json` — OpenAPI 3.0 스펙
 
-#### 18. 프론트엔드 학습 데이터 표시
+#### 19. 프론트엔드 학습 데이터 표시
 - 세션 로드 시 학습 목표/요약/추천질문 렌더링
 - 추천 질문 클릭 시 입력창 자동 입력
 
-#### 19. 시스템 프롬프트 XML 구조화
+#### 20. 시스템 프롬프트 XML 구조화
 - `buildSystemPrompt()` 메서드로 일관된 프롬프트 생성
 - XML 태그 구조: `<role>`, `<learning_context>`, `<rules>`, `<output_format>`, `<reference_documents>`, `<quiz_info>`
 - 퀴즈 정답 정보를 컨텍스트에 포함하여 채팅 중 퀴즈 질문 대응
 
-#### 20. 전체 콘텐츠 재임베딩
+#### 21. 전체 콘텐츠 재임베딩
 - `POST /contents/reembed` — 모든 콘텐츠 재임베딩 API
 - 임베딩 모델 변경 시 일괄 재처리 가능
 

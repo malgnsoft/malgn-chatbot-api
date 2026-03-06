@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS TB_CONTENT (
   file_type TEXT NOT NULL,          -- 파일 유형 (pdf, txt, md, srt, vtt, link, text)
   file_size INTEGER NOT NULL,       -- 파일 크기 (bytes)
   content TEXT,                     -- 추출된 전체 텍스트
+  lesson_id INTEGER,               -- LMS 차시 ID (선택)
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -67,8 +68,9 @@ CREATE TABLE IF NOT EXISTS TB_CONTENT (
 | file_type | TEXT | 파일 유형 | `pdf`, `txt`, `md`, `srt`, `vtt`, `link`, `text` |
 | file_size | INTEGER | 바이트 크기 | `102400` |
 | content | TEXT | 추출 전문 (nullable) | `환불은 구매 후 7일 이내...` |
+| lesson_id | INTEGER | LMS 차시 ID (nullable) | `1`, `null` |
 
-**인덱스**: `idx_content_created_at`, `idx_content_status`
+**인덱스**: `idx_content_created_at`, `idx_content_status`, `idx_content_lesson_id`
 
 ### 2. TB_SESSION — 채팅 세션
 
@@ -313,6 +315,9 @@ wrangler d1 execute malgn-chatbot-db --file=./migrations/002_session_course_fiel
 
 # 003: 부모-자식 세션 (parent_id)
 wrangler d1 execute malgn-chatbot-db --file=./migrations/003_session_parent_id.sql
+
+# 004: 콘텐츠에 lesson_id 추가 (LMS 차시별 분류)
+wrangler d1 execute malgn-chatbot-db --file=./migrations/004_content_lesson_id.sql
 ```
 
 ### 테넌트별 마이그레이션

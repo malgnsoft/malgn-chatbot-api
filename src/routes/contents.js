@@ -2,15 +2,15 @@
  * Contents Routes
  *
  * 콘텐츠 관리 API 엔드포인트
- * GET /contents - 콘텐츠 목록 조회
+ * GET /contents - 콘텐츠 목록 조회 (?lesson_id 필터 지원)
  * POST /contents - 콘텐츠 등록 (텍스트, 파일, 링크)
  * GET /contents/:id - 콘텐츠 상세 조회
  * DELETE /contents/:id - 콘텐츠 삭제
  *
  * 지원 형식:
- * - 텍스트: JSON { type: 'text', title, content }
- * - 파일: FormData { file, title }
- * - 링크: JSON { type: 'link', title, url }
+ * - 텍스트: JSON { type: 'text', title, content, lesson_id? }
+ * - 파일: FormData { file, title, lesson_id? }
+ * - 링크: JSON { type: 'link', title, url, lesson_id? }
  */
 import { Hono } from 'hono';
 import { ContentService } from '../services/contentService.js';
@@ -24,14 +24,17 @@ const contents = new Hono();
  * Query Parameters:
  * - page: 페이지 번호 (기본값: 1)
  * - limit: 페이지당 개수 (기본값: 20, 최대: 100)
+ * - lesson_id: LMS 차시 ID 필터 (선택)
  */
 contents.get('/', async (c) => {
   try {
     const page = Math.max(1, parseInt(c.req.query('page') || '1'));
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
+    const lessonIdParam = c.req.query('lesson_id');
+    const lessonId = lessonIdParam ? parseInt(lessonIdParam, 10) : null;
 
     const contentService = new ContentService(c.env);
-    const result = await contentService.listContents(page, limit);
+    const result = await contentService.listContents(page, limit, lessonId);
 
     return c.json({
       success: true,
@@ -68,6 +71,7 @@ contents.post('/', async (c) => {
     if (contentType.includes('application/json')) {
       const body = await c.req.json();
       const { type, title, content, url } = body;
+      const lessonId = body.lesson_id ? parseInt(body.lesson_id, 10) : null;
 
       if (type === 'text') {
         // 텍스트 콘텐츠 처리
@@ -91,7 +95,7 @@ contents.post('/', async (c) => {
           }, 400);
         }
 
-        const result = await contentService.uploadText(title, content);
+        const result = await contentService.uploadText(title, content, lessonId);
         return c.json({
           success: true,
           data: result,
@@ -120,7 +124,7 @@ contents.post('/', async (c) => {
           }, 400);
         }
 
-        const result = await contentService.uploadLink(title, url);
+        const result = await contentService.uploadLink(title, url, lessonId);
         return c.json({
           success: true,
           data: result,
@@ -142,6 +146,8 @@ contents.post('/', async (c) => {
     const formData = await c.req.formData();
     const file = formData.get('file');
     const title = formData.get('title');
+    const formLessonId = formData.get('lesson_id');
+    const fileLessonId = formLessonId ? parseInt(formLessonId, 10) : null;
 
     // 파일 검증
     if (!file || !(file instanceof File)) {
@@ -178,7 +184,7 @@ contents.post('/', async (c) => {
     }
 
     // 콘텐츠 서비스 호출
-    const result = await contentService.uploadFile(file, title);
+    const result = await contentService.uploadFile(file, title, fileLessonId);
 
     return c.json({
       success: true,
@@ -376,6 +382,7 @@ contents.put('/:id', async (c) => {
 
     const body = await c.req.json();
     const { title, content } = body;
+    const lessonId = body.lesson_id !== undefined ? (body.lesson_id ? parseInt(body.lesson_id, 10) : null) : undefined;
 
     if (!title || title.trim().length === 0) {
       return c.json({
@@ -388,7 +395,7 @@ contents.put('/:id', async (c) => {
     }
 
     const contentService = new ContentService(c.env);
-    const updated = await contentService.updateContent(id, title, content);
+    const updated = await contentService.updateContent(id, title, content, lessonId);
 
     if (!updated) {
       return c.json({

@@ -20,26 +20,27 @@ export class ContentService {
   /**
    * 콘텐츠 목록 조회
    */
-  async listContents(page = 1, limit = 20) {
+  async listContents(page = 1, limit = 20, lessonId = null) {
     const offset = (page - 1) * limit;
 
     // 전체 개수 조회 (status = 1만)
-    const countResult = await this.env.DB
-      .prepare('SELECT COUNT(*) as total FROM TB_CONTENT WHERE status = 1')
-      .first();
+    const hasLessonFilter = lessonId !== null && lessonId !== undefined;
+    const countResult = hasLessonFilter
+      ? await this.env.DB.prepare('SELECT COUNT(*) as total FROM TB_CONTENT WHERE status = 1 AND lesson_id = ?').bind(lessonId).first()
+      : await this.env.DB.prepare('SELECT COUNT(*) as total FROM TB_CONTENT WHERE status = 1').first();
     const total = countResult?.total || 0;
 
     // 콘텐츠 목록 조회 (status = 1만)
-    const { results } = await this.env.DB
-      .prepare(`
-        SELECT id, content_nm, filename, file_type, file_size, status, created_at
-        FROM TB_CONTENT
-        WHERE status = 1
-        ORDER BY created_at DESC
-        LIMIT ? OFFSET ?
-      `)
-      .bind(limit, offset)
-      .all();
+    const hasLessonFilter = lessonId !== null && lessonId !== undefined;
+    const listQuery = hasLessonFilter
+      ? `SELECT id, content_nm, filename, file_type, file_size, lesson_id, status, created_at
+         FROM TB_CONTENT WHERE status = 1 AND lesson_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+      : `SELECT id, content_nm, filename, file_type, file_size, lesson_id, status, created_at
+         FROM TB_CONTENT WHERE status = 1 ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+
+    const { results } = hasLessonFilter
+      ? await this.env.DB.prepare(listQuery).bind(lessonId, limit, offset).all()
+      : await this.env.DB.prepare(listQuery).bind(limit, offset).all();
 
     return {
       contents: results || [],
@@ -58,7 +59,7 @@ export class ContentService {
   async getContent(id) {
     // 콘텐츠 조회 (status = 1만)
     const content = await this.env.DB
-      .prepare('SELECT id, content_nm, filename, file_type, file_size, content, status, created_at, updated_at FROM TB_CONTENT WHERE id = ? AND status = 1')
+      .prepare('SELECT id, content_nm, filename, file_type, file_size, content, lesson_id, status, created_at, updated_at FROM TB_CONTENT WHERE id = ? AND status = 1')
       .bind(id)
       .first();
 
@@ -72,7 +73,7 @@ export class ContentService {
   /**
    * 텍스트 콘텐츠 업로드
    */
-  async uploadText(title, content) {
+  async uploadText(title, content, lessonId = null) {
     if (!title || title.trim().length === 0) {
       throw new Error('제목은 필수입니다.');
     }
@@ -88,10 +89,10 @@ export class ContentService {
     // D1에 콘텐츠 저장
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentTitle, '', 'text', contentSize, contentText)
+      .bind(contentTitle, '', 'text', contentSize, contentText, lessonId)
       .run();
 
     const contentId = insertResult.meta.last_row_id;
@@ -112,6 +113,7 @@ export class ContentService {
       title: contentTitle,
       type: 'text',
       fileSize: contentSize,
+      lessonId,
       createdAt: new Date().toISOString()
     };
   }
@@ -119,7 +121,7 @@ export class ContentService {
   /**
    * 링크 콘텐츠 업로드
    */
-  async uploadLink(title, url) {
+  async uploadLink(title, url, lessonId = null) {
     if (!title || title.trim().length === 0) {
       throw new Error('제목은 필수입니다.');
     }
@@ -185,10 +187,10 @@ export class ContentService {
     // D1에 콘텐츠 저장
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentTitle, url, 'link', contentSize, contentText)
+      .bind(contentTitle, url, 'link', contentSize, contentText, lessonId)
       .run();
 
     const contentId = insertResult.meta.last_row_id;
@@ -210,6 +212,7 @@ export class ContentService {
       type: 'link',
       url,
       fileSize: contentSize,
+      lessonId,
       createdAt: new Date().toISOString()
     };
   }
@@ -306,7 +309,7 @@ export class ContentService {
   /**
    * 파일 업로드 및 처리
    */
-  async uploadFile(file, title = null) {
+  async uploadFile(file, title = null, lessonId = null) {
     // 파일 정보 추출
     const filename = file.name;
     const fileType = this.getFileType(filename);
@@ -335,10 +338,10 @@ export class ContentService {
     // D1에 콘텐츠 저장
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentTitle, filename, fileType, fileSize, contentText)
+      .bind(contentTitle, filename, fileType, fileSize, contentText, lessonId)
       .run();
 
     const contentId = insertResult.meta.last_row_id;
@@ -556,14 +559,14 @@ export class ContentService {
   /**
    * 콘텐츠 수정 (제목 및 내용 수정)
    */
-  async updateContent(id, title, newContent = null) {
+  async updateContent(id, title, newContent = null, lessonId = undefined) {
     if (!title || title.trim().length === 0) {
       throw new Error('제목은 필수입니다.');
     }
 
     // 콘텐츠 존재 확인 (status = 1만)
     const existingContent = await this.env.DB
-      .prepare('SELECT id, file_type FROM TB_CONTENT WHERE id = ? AND status = 1')
+      .prepare('SELECT id, file_type, lesson_id FROM TB_CONTENT WHERE id = ? AND status = 1')
       .bind(id)
       .first();
 
@@ -581,23 +584,25 @@ export class ContentService {
       // Vectorize에서 기존 청크 벡터 삭제
       await this.deleteContentChunks(id);
 
-      // 콘텐츠 업데이트
+      // lesson_id 업데이트 포함
+      const updateLessonId = lessonId !== undefined ? lessonId : existingContent.lesson_id;
       await this.env.DB
         .prepare(`
           UPDATE TB_CONTENT
-          SET content_nm = ?, file_size = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+          SET content_nm = ?, file_size = ?, content = ?, lesson_id = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `)
-        .bind(contentTitle, contentSize, contentText, id)
+        .bind(contentTitle, contentSize, contentText, updateLessonId, id)
         .run();
 
       // 새 임베딩 생성 및 저장
       await this.storeContentEmbedding(id, contentTitle, contentText);
     } else {
-      // 제목만 업데이트
+      // 제목 (+ lesson_id) 업데이트
+      const updateLessonId = lessonId !== undefined ? lessonId : existingContent.lesson_id;
       await this.env.DB
-        .prepare('UPDATE TB_CONTENT SET content_nm = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .bind(contentTitle, id)
+        .prepare('UPDATE TB_CONTENT SET content_nm = ?, lesson_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .bind(contentTitle, updateLessonId, id)
         .run();
     }
 
