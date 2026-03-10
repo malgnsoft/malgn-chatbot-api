@@ -163,10 +163,23 @@ export class ContentService {
                          contentType.includes('text/vtt') ||
                          contentType.includes('application/x-subrip');
 
+      // 문서 파일 확인 (PDF, Word, PowerPoint)
+      const isDocument = urlLower.endsWith('.pdf') ||
+                         urlLower.endsWith('.docx') ||
+                         urlLower.endsWith('.pptx') ||
+                         contentType.includes('application/pdf') ||
+                         contentType.includes('application/vnd.openxmlformats-officedocument.wordprocessingml') ||
+                         contentType.includes('application/vnd.openxmlformats-officedocument.presentationml');
+
       if (isSubtitle) {
         // 자막 파일에서 텍스트 추출
         const subtitleText = await response.text();
         content = this.extractTextFromSubtitle(subtitleText);
+      } else if (isDocument) {
+        // 문서 파일에서 텍스트 추출 (PDF, Word, PowerPoint)
+        const buffer = await response.arrayBuffer();
+        const docType = this.detectDocumentType(urlLower, contentType);
+        content = await this.extractDocumentText(buffer, docType);
       } else if (contentType.includes('text/html')) {
         // HTML에서 텍스트 추출
         const html = await response.text();
@@ -174,7 +187,7 @@ export class ContentService {
       } else if (contentType.includes('text/') || contentType.includes('application/json')) {
         content = await response.text();
       } else {
-        throw new Error('지원하지 않는 콘텐츠 형식입니다. (텍스트 기반 콘텐츠만 지원)');
+        throw new Error('지원하지 않는 콘텐츠 형식입니다. (지원: PDF, DOCX, PPTX, 텍스트, 자막, HTML)');
       }
     } catch (error) {
       throw new Error(`URL에서 콘텐츠를 가져올 수 없습니다: ${error.message}`);
@@ -919,5 +932,99 @@ export class ContentService {
     }
 
     throw new Error('PDF에서 텍스트를 추출할 수 없습니다.');
+  }
+
+  /**
+   * URL 확장자 및 Content-Type으로 문서 타입 감지
+   * @param {string} urlLower - 소문자 URL
+   * @param {string} contentType - Content-Type 헤더
+   * @returns {string} - 'pdf' | 'docx' | 'pptx'
+   */
+  detectDocumentType(urlLower, contentType) {
+    if (urlLower.endsWith('.pdf') || contentType.includes('application/pdf')) {
+      return 'pdf';
+    }
+    if (urlLower.endsWith('.docx') || contentType.includes('wordprocessingml')) {
+      return 'docx';
+    }
+    if (urlLower.endsWith('.pptx') || contentType.includes('presentationml')) {
+      return 'pptx';
+    }
+    return 'pdf'; // fallback
+  }
+
+  /**
+   * 문서 바이너리에서 텍스트 추출 (PDF, Word, PowerPoint)
+   * - PDF: 기존 extractPdfText 사용
+   * - DOCX/PPTX: Cloudflare Workers AI toMarkdown() 사용
+   * @param {ArrayBuffer} buffer - 파일 바이너리
+   * @param {string} docType - 'pdf' | 'docx' | 'pptx'
+   * @returns {Promise<string>} - 추출된 텍스트
+   */
+  async extractDocumentText(buffer, docType) {
+    console.log(`[ContentService] Extracting text from ${docType}, buffer size: ${buffer.byteLength}`);
+
+    if (docType === 'pdf') {
+      return await this.extractPdfText(buffer);
+    }
+
+    // DOCX, PPTX: Cloudflare Workers AI toMarkdown() 사용
+    const mimeTypes = {
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    };
+    const extensions = { docx: 'docx', pptx: 'pptx' };
+    const mimeType = mimeTypes[docType];
+    const ext = extensions[docType];
+    const typeLabel = docType === 'docx' ? 'Word' : 'PowerPoint';
+
+    if (!this.env.AI?.toMarkdown) {
+      throw new Error(`${typeLabel} 파일 텍스트 추출을 위해 Cloudflare AI가 필요합니다.`);
+    }
+
+    try {
+      console.log(`[ContentService] Trying AI toMarkdown for ${typeLabel}...`);
+      const result = await this.env.AI.toMarkdown({
+        name: `document.${ext}`,
+        blob: new Blob([buffer], { type: mimeType })
+      });
+
+      if (result.format === 'markdown' && result.data) {
+        let rawText = result.data;
+
+        // 메타데이터 블록 제거
+        const contentsMatch = rawText.match(/\n+Contents\n/);
+        if (contentsMatch) {
+          const contentsIndex = rawText.indexOf(contentsMatch[0]);
+          rawText = rawText.substring(contentsIndex + contentsMatch[0].length);
+        } else if (rawText.startsWith(`document.${ext}\n`)) {
+          const metadataEndIndex = rawText.indexOf('\n\n', 50);
+          if (metadataEndIndex !== -1) {
+            rawText = rawText.substring(metadataEndIndex + 2);
+          }
+        }
+
+        // Markdown → plain text 변환
+        const text = rawText
+          .replace(/^#+\s*/gm, '')
+          .replace(/^\s*[-*+]\s*/gm, '')
+          .replace(/\*\*|__/g, '')
+          .replace(/\*|_/g, '')
+          .replace(/`/g, '')
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+          .trim();
+
+        if (text && this.validateExtractedText(text)) {
+          console.log(`[ContentService] ${typeLabel} text extracted, length: ${text.length}`);
+          return text;
+        }
+      }
+
+      throw new Error(`${typeLabel} 파일에서 유효한 텍스트를 추출할 수 없습니다.`);
+    } catch (error) {
+      if (error.message.includes('유효한 텍스트')) throw error;
+      console.error(`[ContentService] ${typeLabel} extraction failed:`, error.message);
+      throw new Error(`${typeLabel} 파일에서 텍스트를 추출할 수 없습니다: ${error.message}`);
+    }
   }
 }
