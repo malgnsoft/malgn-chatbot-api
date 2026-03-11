@@ -109,7 +109,7 @@ sessions.get('/', async (c) => {
  * - course_user_id: 코스 사용자 ID (선택)
  * - lesson_id: 레슨 ID (선택)
  * - content_ids: 연결할 콘텐츠 ID 배열 (필수, 최소 1개)
- * - settings: AI 설정 (선택) { persona, temperature, topP }
+ * - settings: AI 설정 (선택) { persona, temperature, topP, choiceCount, oxCount }
  */
 sessions.post('/', async (c) => {
   try {
@@ -203,7 +203,8 @@ sessions.post('/', async (c) => {
                 maxTokens: childSession.max_tokens,
                 summaryCount: childSession.summary_count,
                 recommendCount: childSession.recommend_count,
-                quizCount: childSession.quiz_count
+                choiceCount: childSession.choice_count,
+                oxCount: childSession.ox_count
               },
               learning: {
                 goal: parentSession.learning_goal || null,
@@ -224,8 +225,8 @@ sessions.post('/', async (c) => {
       const insertResult = await c.env.DB
         .prepare(`
           INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id,
-            persona, temperature, top_p, max_tokens, summary_count, recommend_count, quiz_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           parentId, courseId, courseUserId, lessonId, userId,
@@ -235,7 +236,8 @@ sessions.post('/', async (c) => {
           parentSession.max_tokens,
           parentSession.summary_count,
           parentSession.recommend_count,
-          parentSession.quiz_count
+          parentSession.choice_count,
+          parentSession.ox_count
         )
         .run();
 
@@ -277,7 +279,8 @@ sessions.post('/', async (c) => {
             maxTokens: parentSession.max_tokens,
             summaryCount: parentSession.summary_count,
             recommendCount: parentSession.recommend_count,
-            quizCount: parentSession.quiz_count
+            choiceCount: parentSession.choice_count,
+            oxCount: parentSession.ox_count
           },
           learning: {
             goal: parentSession.learning_goal || null,
@@ -310,8 +313,8 @@ sessions.post('/', async (c) => {
     // 세션 생성 (AI 설정 포함)
     const insertResult = await c.env.DB
       .prepare(`
-        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, persona, temperature, top_p, max_tokens, summary_count, recommend_count, quiz_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         0,
@@ -325,7 +328,8 @@ sessions.post('/', async (c) => {
         settings.maxTokens ?? null,
         settings.summaryCount ?? null,
         settings.recommendCount ?? null,
-        settings.quizCount ?? null
+        settings.choiceCount ?? null,
+        settings.oxCount ?? null
       )
       .run();
 
@@ -377,7 +381,8 @@ sessions.post('/', async (c) => {
           maxTokens: session.max_tokens,
           summaryCount: session.summary_count,
           recommendCount: session.recommend_count,
-          quizCount: session.quiz_count
+          choiceCount: session.choice_count,
+          oxCount: session.ox_count
         },
         learning: {
           goal: learningData.learningGoal,
@@ -522,7 +527,8 @@ sessions.get('/:id', async (c) => {
           maxTokens: session.max_tokens,
           summaryCount: session.summary_count,
           recommendCount: session.recommend_count,
-          quizCount: session.quiz_count
+          choiceCount: session.choice_count,
+          oxCount: session.ox_count
         },
         learning: {
           goal: sourceSession.learning_goal || null,
@@ -616,20 +622,23 @@ sessions.put('/:id', async (c) => {
     const recommendCount = settings.recommendCount !== undefined
       ? Math.max(1, Math.min(10, settings.recommendCount))
       : session.recommend_count;
-    const quizCount = settings.quizCount !== undefined
-      ? Math.max(1, Math.min(20, settings.quizCount))
-      : session.quiz_count;
+    const choiceCount = settings.choiceCount !== undefined
+      ? Math.max(0, Math.min(10, settings.choiceCount))
+      : session.choice_count;
+    const oxCount = settings.oxCount !== undefined
+      ? Math.max(0, Math.min(10, settings.oxCount))
+      : session.ox_count;
 
     // 세션 업데이트
     await c.env.DB
       .prepare(`
         UPDATE TB_SESSION
         SET persona = ?, temperature = ?, top_p = ?, max_tokens = ?,
-            summary_count = ?, recommend_count = ?, quiz_count = ?,
+            summary_count = ?, recommend_count = ?, choice_count = ?, ox_count = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `)
-      .bind(persona, temperature, topP, maxTokens, summaryCount, recommendCount, quizCount, id)
+      .bind(persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, id)
       .run();
 
     return c.json({
@@ -643,7 +652,8 @@ sessions.put('/:id', async (c) => {
           maxTokens,
           summaryCount,
           recommendCount,
-          quizCount
+          choiceCount,
+          oxCount
         }
       },
       message: 'AI 설정이 업데이트되었습니다.'
@@ -681,7 +691,7 @@ sessions.get('/:id/quizzes', async (c) => {
 
     // 세션 존재 확인 (status = 1만)
     const session = await c.env.DB
-      .prepare('SELECT id, parent_id, quiz_count FROM TB_SESSION WHERE id = ? AND status = 1')
+      .prepare('SELECT id, parent_id, choice_count, ox_count FROM TB_SESSION WHERE id = ? AND status = 1')
       .bind(id)
       .first();
 
@@ -723,7 +733,8 @@ sessions.get('/:id/quizzes', async (c) => {
 
     // 콘텐츠의 퀴즈 조회 (설정된 퀴즈 수 만큼 제한)
     const quizService = new QuizService(c.env);
-    const quizzes = await quizService.getQuizzesByContentIds(contentIds, session.quiz_count);
+    const totalQuizLimit = (session.choice_count || 3) + (session.ox_count || 2);
+    const quizzes = await quizService.getQuizzesByContentIds(contentIds, totalQuizLimit);
 
     return c.json({
       success: true,
@@ -807,15 +818,18 @@ sessions.post('/:id/quizzes', async (c) => {
       }, 400);
     }
 
-    // 요청 본문에서 퀴즈 옵션 추출
-    let quizOptions = { choiceCount: 3, oxCount: 2 };
+    // 요청 본문에서 퀴즈 옵션 추출 (기본값: 세션 설정)
+    let quizOptions = {
+      choiceCount: session.choice_count ?? 3,
+      oxCount: session.ox_count ?? 2
+    };
     try {
       const body = await c.req.json();
       // 새로운 형식: choiceCount, oxCount
       if (body.choiceCount !== undefined || body.oxCount !== undefined) {
         quizOptions = {
-          choiceCount: Math.max(0, Math.min(10, body.choiceCount ?? 3)),
-          oxCount: Math.max(0, Math.min(10, body.oxCount ?? 2))
+          choiceCount: Math.max(0, Math.min(10, body.choiceCount ?? session.choice_count ?? 3)),
+          oxCount: Math.max(0, Math.min(10, body.oxCount ?? session.ox_count ?? 2))
         };
       }
       // 하위 호환: count만 전달된 경우

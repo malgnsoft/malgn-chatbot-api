@@ -570,7 +570,8 @@ export default {
                       maxTokens: { type: 'integer', minimum: 256, maximum: 4096 },
                       summaryCount: { type: 'integer', minimum: 1, maximum: 10, description: '요약 개수' },
                       recommendCount: { type: 'integer', minimum: 1, maximum: 10, description: '추천 질문 개수' },
-                      quizCount: { type: 'integer', minimum: 1, maximum: 20, description: '퀴즈 개수' }
+                      choiceCount: { type: 'integer', minimum: 0, maximum: 10, default: 3, description: '4지선다 퀴즈 수' },
+                      oxCount: { type: 'integer', minimum: 0, maximum: 10, default: 2, description: 'OX 퀴즈 수' }
                     }
                   }
                 }
@@ -669,7 +670,8 @@ export default {
                       maxTokens: { type: 'integer', minimum: 256, maximum: 4096, description: '최대 토큰 수' },
                       summaryCount: { type: 'integer', minimum: 1, maximum: 10, description: '요약 개수' },
                       recommendCount: { type: 'integer', minimum: 1, maximum: 10, description: '추천 질문 개수' },
-                      quizCount: { type: 'integer', minimum: 1, maximum: 20, description: '퀴즈 개수' }
+                      choiceCount: { type: 'integer', minimum: 0, maximum: 10, description: '4지선다 퀴즈 수' },
+                      oxCount: { type: 'integer', minimum: 0, maximum: 10, description: 'OX 퀴즈 수' }
                     }
                   }
                 }
@@ -699,7 +701,8 @@ export default {
                             maxTokens: { type: 'integer' },
                             summaryCount: { type: 'integer' },
                             recommendCount: { type: 'integer' },
-                            quizCount: { type: 'integer' }
+                            choiceCount: { type: 'integer' },
+                            oxCount: { type: 'integer' }
                           }
                         }
                       }
@@ -926,7 +929,8 @@ export default {
               maxTokens: { type: 'integer', description: '최대 토큰 수' },
               summaryCount: { type: 'integer', description: '요약 개수' },
               recommendCount: { type: 'integer', description: '추천 질문 개수' },
-              quizCount: { type: 'integer', description: '퀴즈 개수' }
+              choiceCount: { type: 'integer', description: '4지선다 퀴즈 수' },
+              oxCount: { type: 'integer', description: 'OX 퀴즈 수' }
             }
           },
           learning: {
