@@ -15,7 +15,12 @@ export const authMiddleware = async (c, next) => {
     }, 401);
   }
 
-  const apiKey = authHeader.substring(7);
+  let apiKey = authHeader.substring(7);
+
+  // "API_KEY=" 접두어가 포함된 경우 자동 제거 (Swagger UI 입력 실수 대응)
+  if (apiKey.startsWith('API_KEY=')) {
+    apiKey = apiKey.substring(8);
+  }
 
   if (!c.env.API_KEY) {
     console.error('API_KEY is not configured');

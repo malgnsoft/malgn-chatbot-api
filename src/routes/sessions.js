@@ -150,11 +150,19 @@ sessions.post('/', async (c) => {
         }, 404);
       }
 
-      // 동일 부모 + 수강생 자식 존재 확인
+      // 동일 부모 + 수강생 + 레슨 자식 존재 확인
       if (courseUserId) {
+        let existingChildQuery = 'SELECT id FROM TB_SESSION WHERE parent_id = ? AND course_user_id = ? AND status = 1';
+        const bindParams = [parentId, courseUserId];
+        if (lessonId) {
+          existingChildQuery += ' AND lesson_id = ?';
+          bindParams.push(lessonId);
+        } else {
+          existingChildQuery += ' AND (lesson_id IS NULL OR lesson_id = 0)';
+        }
         const existingChild = await c.env.DB
-          .prepare('SELECT id FROM TB_SESSION WHERE parent_id = ? AND course_user_id = ? AND status = 1')
-          .bind(parentId, courseUserId)
+          .prepare(existingChildQuery)
+          .bind(...bindParams)
           .first();
 
         if (existingChild) {
@@ -310,7 +318,8 @@ sessions.post('/', async (c) => {
       }, 400);
     }
 
-    // 세션 생성 (AI 설정 포함)
+    // 세션 생성 (AI 설정 포함, 미전달 시 DB DEFAULT 사용)
+    const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
         INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count)
@@ -322,14 +331,14 @@ sessions.post('/', async (c) => {
         courseUserId,
         lessonId,
         userId,
-        settings.persona || null,
-        settings.temperature ?? null,
-        settings.topP ?? null,
-        settings.maxTokens ?? null,
-        settings.summaryCount ?? null,
-        settings.recommendCount ?? null,
-        settings.choiceCount ?? null,
-        settings.oxCount ?? null
+        settings.persona || defaultPersona,
+        settings.temperature ?? 0.3,
+        settings.topP ?? 0.3,
+        settings.maxTokens ?? 1024,
+        settings.summaryCount ?? 3,
+        settings.recommendCount ?? 3,
+        settings.choiceCount ?? 3,
+        settings.oxCount ?? 2
       )
       .run();
 
@@ -342,6 +351,27 @@ sessions.post('/', async (c) => {
           .prepare('INSERT INTO TB_SESSION_CONTENT (session_id, content_id) VALUES (?, ?)')
           .bind(sessionId, contentId)
           .run();
+      }
+    }
+
+    // 퀴즈가 없는 콘텐츠에 대해 백그라운드로 퀴즈 자동 생성
+    const quizService = new QuizService(c.env);
+    const quizOptions = {
+      choiceCount: settings.choiceCount ?? 3,
+      oxCount: settings.oxCount ?? 2
+    };
+    for (const contentId of contentIds) {
+      const existingQuizzes = await quizService.getQuizzesByContent(contentId);
+      if (existingQuizzes.length === 0) {
+        const content = await c.env.DB
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
+          .bind(contentId)
+          .first();
+        if (content?.content && content.content.trim().length >= 100) {
+          const quizPromise = quizService.generateQuizzesForContent(contentId, content.content, quizOptions)
+            .catch(err => console.error('[Session] Quiz generation failed for content', contentId, err.message));
+          c.executionCtx.waitUntil(quizPromise);
+        }
       }
     }
 

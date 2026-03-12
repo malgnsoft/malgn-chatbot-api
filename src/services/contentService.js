@@ -729,6 +729,52 @@ export class ContentService {
   }
 
   /**
+   * PDF/문서 메타데이터 줄 제거
+   * toMarkdown()이 메타데이터 블록을 완전히 분리하지 못하는 경우 대비
+   */
+  removePdfMetadataLines(text) {
+    // PDF 메타데이터 필드 패턴 (줄 단위로 제거)
+    const metadataPatterns = [
+      /^document\.pdf\s*$/i,
+      /^document\.docx\s*$/i,
+      /^document\.pptx\s*$/i,
+      /^Metadata\s*$/,
+      /^Contents\s*$/,
+      /^PDFFormatVersion\b/i,
+      /^Creator\s*[:：]/i,
+      /^Producer\s*[:：]/i,
+      /^Author\s*[:：]/i,
+      /^Title\s*[:：]/i,
+      /^Subject\s*[:：]/i,
+      /^Keywords\s*[:：]/i,
+      /^CreationDate\s*[:：]/i,
+      /^ModDate\s*[:：]/i,
+      /^Language\s*[:：]/i,
+      /^dc[:：]/i,              // dc:title, dc:creator, dc:description 등
+      /^xmp[:：]/i,             // xmp:CreateDate, xmp:ModifyDate 등
+      /^xmpMM[:：]/i,           // xmpMM:DocumentID 등
+      /^pdf[:：]/i,             // pdf:PDFVersion 등
+      /^pdfaid[:：]/i,          // pdfaid:part 등
+      /^Tagged\s*[:：]/i,
+      /^Pages\s*[:：]\s*\d+\s*$/i,
+      /^Encrypted\s*[:：]/i,
+      /^Page\s*size\s*[:：]/i,
+      /^File\s*size\s*[:：]/i,
+      /^Optimized\s*[:：]/i,
+      /^PDF\s*version\s*[:：]/i,
+    ];
+
+    const lines = text.split('\n');
+    const filtered = lines.filter(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return true; // 빈 줄 유지
+      return !metadataPatterns.some(pattern => pattern.test(trimmed));
+    });
+
+    return filtered.join('\n');
+  }
+
+  /**
    * 추출된 텍스트 검증 (최소한의 검증만 수행)
    * 이전 동작 복원 - 빈 텍스트와 너무 짧은 텍스트만 거부
    */
@@ -785,6 +831,9 @@ export class ContentService {
               rawText = rawText.substring(metadataEndIndex + 2);
             }
           }
+
+          // PDF 메타데이터 필드 줄 제거 (Contents 이후에도 남아있을 수 있음)
+          rawText = this.removePdfMetadataLines(rawText);
 
           // Markdown에서 텍스트 추출 (헤더, 리스트 등 마크다운 문법 제거)
           const text = rawText
@@ -1003,6 +1052,9 @@ export class ContentService {
             rawText = rawText.substring(metadataEndIndex + 2);
           }
         }
+
+        // 문서 메타데이터 필드 줄 제거
+        rawText = this.removePdfMetadataLines(rawText);
 
         // Markdown → plain text 변환
         const text = rawText
