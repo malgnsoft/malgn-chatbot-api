@@ -173,7 +173,16 @@ export class ChatService {
       try {
         const questions = JSON.parse(recommendedQuestions);
         if (Array.isArray(questions) && questions.length > 0) {
-          learningParts.push(`추천 질문 (학습자가 이런 질문을 할 수 있음):\n${questions.map(q => `- ${q}`).join('\n')}`);
+          // Q&A 객체 형식 지원: {question, answer}
+          const qnaLines = questions.map(q => {
+            if (typeof q === 'object' && q.question) {
+              return q.answer
+                ? `Q: ${q.question}\nA: ${q.answer}`
+                : `Q: ${q.question}`;
+            }
+            return `Q: ${q}`;
+          });
+          learningParts.push(`추천 질문과 답변 (학습자가 이런 질문을 하면 아래 답변을 참고하여 답변하세요):\n${qnaLines.join('\n\n')}`);
         }
       } catch {
         // skip if parse fails

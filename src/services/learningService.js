@@ -135,17 +135,25 @@ export class LearningService {
 ★★★ 추천 질문+답변 생성 규칙 ★★★
 
 반드시 콘텐츠에 나오는 실제 용어를 사용하여 질문과 답변을 만드세요.
-답변은 콘텐츠 내용을 기반으로 2-3문장으로 간결하게 작성하세요.
 
-[올바른 예시]
-- {"question": "단어란 무엇인가요?", "answer": "단어는 의미를 가진 가장 작은 언어 단위입니다. 문장을 구성하는 기본 요소로, 홀로 쓰일 수 있는 말의 단위입니다."}
-- {"question": "명사에는 어떤 것들이 있나요?", "answer": "명사는 사람, 장소, 사물의 이름을 나타내는 품사입니다. 고유명사와 보통명사로 나뉩니다."}
+★ 답변 작성 규칙 ★
+- 답변은 반드시 콘텐츠 본문의 내용을 직접 인용하거나 요약하여 작성하세요.
+- 답변은 4-6문장으로 충분히 자세하게 작성하세요.
+- 한국어 학습 콘텐츠인 경우, 강의에 나오는 실제 예문, 표현, 단어를 답변에 포함하세요.
+- 일반적인 사전적 정의가 아닌, 해당 콘텐츠에서 설명하는 구체적 내용을 답변에 담으세요.
+
+[올바른 예시 - 한국어 학습]
+- {"question": "위치를 나타내는 표현에는 어떤 것이 있나요?", "answer": "이 강의에서는 위치를 나타내는 다양한 표현을 배웁니다. '위(on/above)', '아래(under/below)', '앞(in front of)', '뒤(behind)', '옆(beside)', '안(inside)', '밖(outside)' 등이 있습니다. 예를 들어 '책상 위에 책이 있어요', '의자 아래에 고양이가 있어요'처럼 사용합니다. 이러한 위치 표현은 '-에' 조사와 함께 사용되어 사물이나 사람의 위치를 설명할 때 쓰입니다."}
+
+[올바른 예시 - 일반 학습]
+- {"question": "광합성 과정은 어떻게 진행되나요?", "answer": "광합성은 식물이 빛 에너지를 화학 에너지로 변환하는 과정입니다. 먼저 명반응 단계에서 엽록체의 틸라코이드 막에서 빛을 흡수하여 물을 분해하고, ATP와 NADPH를 생성합니다. 이어서 캘빈 회로(암반응)에서 이산화탄소를 고정하여 포도당을 합성합니다. 이 과정은 6CO₂ + 6H₂O → C₆H₁₂O₆ + 6O₂로 요약됩니다."}
 
 [금지 - 절대 이렇게 생성하지 마세요]
 - 물결표(~) 사용 금지
 - "~란/은/는" 같은 템플릿 텍스트 금지
 - 콘텐츠에 없는 용어로 질문 금지
 - 답변 없이 질문만 생성하는 것 금지
+- "~입니다." 한 문장으로 끝나는 짧은 답변 금지
 
 질문은 반드시 콘텐츠에서 언급된 핵심 개념을 사용하세요.`;
 
@@ -234,6 +242,16 @@ ${context}`;
           console.warn('[LearningService] Template/placeholder text detected in questions, setting to null');
           recommendedQuestions = null;
         }
+
+        // 답변이 없는 질문이 있으면 2차 LLM 호출로 답변 생성
+        if (recommendedQuestions && recommendedQuestions.some(q => !q.answer)) {
+          console.log('[LearningService] Missing answers detected, generating answers via 2nd LLM call...');
+          try {
+            recommendedQuestions = await this.generateAnswersForQuestions(recommendedQuestions, context);
+          } catch (err) {
+            console.error('[LearningService] Answer generation failed:', err.message);
+          }
+        }
       }
 
       if (Array.isArray(learningSummary)) {
@@ -259,6 +277,89 @@ ${context}`;
         ? contentTitles.slice(0, 2).join(', ') + (contentTitles.length > 2 ? ' 외' : '')
         : '새 대화';
       return { sessionNm: defaultSessionNm, learningGoal: null, learningSummary: null, recommendedQuestions: null, error: error.message };
+    }
+  }
+
+  /**
+   * 답변이 없는 추천 질문에 대해 답변을 생성하는 2차 LLM 호출
+   * @param {Array} questions - [{question, answer}] 배열
+   * @param {string} context - 학습 콘텐츠 텍스트
+   * @returns {Promise<Array>} - 답변이 채워진 Q&A 배열
+   */
+  async generateAnswersForQuestions(questions, context) {
+    const questionsToAnswer = questions.filter(q => !q.answer);
+    if (questionsToAnswer.length === 0) return questions;
+
+    // 컨텍스트 길이 제한 (답변 생성용은 더 짧게)
+    const truncatedContext = context.length > 16000 ? context.substring(0, 16000) : context;
+
+    const systemPrompt = `당신은 교육 전문가입니다. 주어진 학습 콘텐츠를 기반으로 각 질문에 대한 답변을 생성해 주세요.
+
+규칙:
+- 답변은 반드시 콘텐츠 본문의 내용을 직접 인용하거나 요약하여 작성하세요.
+- 답변은 4-6문장으로 충분히 자세하게 작성하세요.
+- 한국어 학습 콘텐츠인 경우, 강의에 나오는 실제 예문, 표현, 단어를 답변에 포함하세요.
+- 일반적인 사전적 정의가 아닌, 해당 콘텐츠에서 설명하는 구체적 내용을 답변에 담으세요.
+- 반드시 JSON 배열만 출력하세요.
+
+출력 형식:
+[
+  {"question": "질문1", "answer": "상세한 답변1"},
+  {"question": "질문2", "answer": "상세한 답변2"}
+]`;
+
+    const questionList = questionsToAnswer.map((q, i) => `${i + 1}. ${q.question}`).join('\n');
+    const userPrompt = `다음 학습 콘텐츠를 참고하여 각 질문에 답변해 주세요.
+
+질문 목록:
+${questionList}
+
+학습 콘텐츠:
+${truncatedContext}`;
+
+    try {
+      const result = await this.env.AI.run(
+        this.model,
+        {
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: 2048,
+          temperature: 0.2
+        },
+        { gateway: { id: 'malgn-chatbot', skipCache: false } }
+      );
+
+      if (!result?.response) return questions;
+
+      const jsonMatch = result.response.match(/\[[\s\S]*\]/);
+      const answers = JSON.parse(jsonMatch ? jsonMatch[0] : '[]');
+
+      // 답변 매핑
+      const answerMap = {};
+      for (const a of answers) {
+        if (a.question && a.answer) {
+          answerMap[a.question] = a.answer;
+        }
+      }
+
+      // 원래 질문 배열에 답변 채워넣기
+      return questions.map(q => {
+        if (q.answer) return q;
+        // 정확 매칭 또는 부분 매칭
+        const exactMatch = answerMap[q.question];
+        if (exactMatch) return { ...q, answer: exactMatch };
+        // 인덱스 기반 폴백
+        const idx = questionsToAnswer.findIndex(qt => qt.question === q.question);
+        if (idx >= 0 && answers[idx]?.answer) {
+          return { ...q, answer: answers[idx].answer };
+        }
+        return q;
+      });
+    } catch (error) {
+      console.error('[LearningService] generateAnswersForQuestions error:', error.message);
+      return questions;
     }
   }
 

@@ -124,15 +124,17 @@ sessions.post('/', async (c) => {
 
     try {
       const body = await c.req.json();
+      console.log('[Session POST] body:', JSON.stringify(body));
       userId = body.user_id != null ? parseInt(body.user_id, 10) : null;
       courseId = body.course_id || null;
       courseUserId = body.course_user_id || null;
       lessonId = body.lesson_id || null;
       contentIds = Array.isArray(body.content_ids) ? body.content_ids : [];
-      settings = body.settings || {};
+      settings = typeof body.settings === 'string' ? JSON.parse(body.settings) : (body.settings || {});
       parentId = body.parent_id || 0;
-    } catch {
-      // JSON 파싱 실패
+      console.log('[Session POST] parsed settings:', JSON.stringify(settings));
+    } catch (e) {
+      console.error('[Session POST] body parse error:', e.message);
     }
 
     // ── 자식 세션 생성 (parent_id > 0) ──
@@ -322,8 +324,8 @@ sessions.post('/', async (c) => {
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
-        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         0,
@@ -338,7 +340,8 @@ sessions.post('/', async (c) => {
         settings.summaryCount ?? 3,
         settings.recommendCount ?? 3,
         settings.choiceCount ?? 3,
-        settings.oxCount ?? 2
+        settings.oxCount ?? 2,
+        settings.quizDifficulty || 'normal'
       )
       .run();
 
@@ -354,30 +357,54 @@ sessions.post('/', async (c) => {
       }
     }
 
-    // 퀴즈가 없는 콘텐츠에 대해 백그라운드로 퀴즈 자동 생성
+    // 퀴즈 생성 준비 (퀴즈 수가 0이면 스킵)
     const quizService = new QuizService(c.env);
+    const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
     const quizOptions = {
       choiceCount: settings.choiceCount ?? 3,
-      oxCount: settings.oxCount ?? 2
+      oxCount: settings.oxCount ?? 2,
+      difficulty: settings.quizDifficulty || 'normal'
     };
-    for (const contentId of contentIds) {
-      const existingQuizzes = await quizService.getQuizzesByContent(contentId);
-      if (existingQuizzes.length === 0) {
-        const content = await c.env.DB
-          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
-          .bind(contentId)
-          .first();
-        if (content?.content && content.content.trim().length >= 100) {
-          const quizPromise = quizService.generateQuizzesForContent(contentId, content.content, quizOptions)
-            .catch(err => console.error('[Session] Quiz generation failed for content', contentId, err.message));
-          c.executionCtx.waitUntil(quizPromise);
+
+    let quizPromises = [];
+    if (totalQuizCount > 0) {
+      for (const contentId of contentIds) {
+        const existingQuizzes = await quizService.getQuizzesByContent(contentId);
+        const existingChoiceCount = existingQuizzes.filter(q => q.quiz_type === 'choice').length;
+        const existingOxCount = existingQuizzes.filter(q => q.quiz_type === 'ox').length;
+        const needsRegeneration = existingQuizzes.length === 0
+          || existingChoiceCount !== quizOptions.choiceCount
+          || existingOxCount !== quizOptions.oxCount;
+
+        if (needsRegeneration) {
+          const content = await c.env.DB
+            .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
+            .bind(contentId)
+            .first();
+          if (content?.content && content.content.trim().length >= 100) {
+            // 기존 퀴즈가 있으면 삭제 후 재생성
+            if (existingQuizzes.length > 0) {
+              console.log(`[Session] Quiz count mismatch for content ${contentId}: choice ${existingChoiceCount}→${quizOptions.choiceCount}, ox ${existingOxCount}→${quizOptions.oxCount}. Regenerating.`);
+              await c.env.DB
+                .prepare('UPDATE TB_QUIZ SET status = -1 WHERE content_id = ? AND status = 1')
+                .bind(contentId)
+                .run();
+            }
+            quizPromises.push(
+              quizService.generateQuizzesForContent(contentId, content.content, quizOptions)
+                .catch(err => console.error('[Session] Quiz generation failed for content', contentId, err.message))
+            );
+          }
         }
       }
     }
 
-    // 학습 목표, 요약, 추천 질문 생성 및 Vectorize에 저장
+    // 학습 데이터 + 퀴즈 생성 병렬 실행 (퀴즈 완료까지 대기)
     const learningService = new LearningService(c.env);
-    const learningData = await learningService.generateAndStoreLearningData(sessionId, contentIds, settings);
+    const [learningData] = await Promise.all([
+      learningService.generateAndStoreLearningData(sessionId, contentIds, settings),
+      ...quizPromises
+    ]);
 
     // 생성된 세션 조회 (학습 데이터 포함)
     const session = await c.env.DB
@@ -412,7 +439,8 @@ sessions.post('/', async (c) => {
           summaryCount: session.summary_count,
           recommendCount: session.recommend_count,
           choiceCount: session.choice_count,
-          oxCount: session.ox_count
+          oxCount: session.ox_count,
+          quizDifficulty: session.quiz_difficulty || 'normal'
         },
         learning: {
           goal: learningData.learningGoal,
@@ -558,7 +586,8 @@ sessions.get('/:id', async (c) => {
           summaryCount: session.summary_count,
           recommendCount: session.recommend_count,
           choiceCount: session.choice_count,
-          oxCount: session.ox_count
+          oxCount: session.ox_count,
+          quizDifficulty: session.quiz_difficulty || 'normal'
         },
         learning: {
           goal: sourceSession.learning_goal || null,
@@ -658,6 +687,7 @@ sessions.put('/:id', async (c) => {
     const oxCount = settings.oxCount !== undefined
       ? Math.max(0, Math.min(10, settings.oxCount))
       : session.ox_count;
+    const quizDifficulty = settings.quizDifficulty || session.quiz_difficulty || 'normal';
 
     // 세션 업데이트
     await c.env.DB
@@ -665,10 +695,10 @@ sessions.put('/:id', async (c) => {
         UPDATE TB_SESSION
         SET persona = ?, temperature = ?, top_p = ?, max_tokens = ?,
             summary_count = ?, recommend_count = ?, choice_count = ?, ox_count = ?,
-            updated_at = CURRENT_TIMESTAMP
+            quiz_difficulty = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `)
-      .bind(persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, id)
+      .bind(persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, quizDifficulty, id)
       .run();
 
     return c.json({
@@ -683,7 +713,8 @@ sessions.put('/:id', async (c) => {
           summaryCount,
           recommendCount,
           choiceCount,
-          oxCount
+          oxCount,
+          quizDifficulty
         }
       },
       message: 'AI 설정이 업데이트되었습니다.'

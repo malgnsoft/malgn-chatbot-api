@@ -104,13 +104,7 @@ export class ContentService {
     // 임베딩 생성 및 Vectorize 저장
     await this.storeContentEmbedding(contentId, contentTitle, contentText);
 
-    // 퀴즈 생성 (백그라운드로 실행, 실패해도 업로드는 성공)
-    const quizPromise = this.generateQuizForContent(contentId, contentText).catch(err => {
-      console.error('[ContentService] Quiz generation failed:', err.message);
-    });
-    if (this.executionCtx) {
-      this.executionCtx.waitUntil(quizPromise);
-    }
+    // 퀴즈는 세션 생성 시 설정에 맞게 생성됨
 
     return {
       id: contentId,
@@ -215,13 +209,7 @@ export class ContentService {
     // 임베딩 생성 및 Vectorize 저장
     await this.storeContentEmbedding(contentId, contentTitle, contentText);
 
-    // 퀴즈 생성 (백그라운드로 실행)
-    const quizPromise = this.generateQuizForContent(contentId, contentText).catch(err => {
-      console.error('[ContentService] Quiz generation failed:', err.message);
-    });
-    if (this.executionCtx) {
-      this.executionCtx.waitUntil(quizPromise);
-    }
+    // 퀴즈는 세션 생성 시 설정에 맞게 생성됨
 
     return {
       id: contentId,
@@ -366,13 +354,7 @@ export class ContentService {
     // 임베딩 생성 및 Vectorize 저장
     await this.storeContentEmbedding(contentId, contentTitle, contentText);
 
-    // 퀴즈 생성 (백그라운드로 실행)
-    const quizPromise = this.generateQuizForContent(contentId, contentText).catch(err => {
-      console.error('[ContentService] Quiz generation failed:', err.message);
-    });
-    if (this.executionCtx) {
-      this.executionCtx.waitUntil(quizPromise);
-    }
+    // 퀴즈는 세션 생성 시 설정에 맞게 생성됨
 
     return {
       id: contentId,

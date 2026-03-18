@@ -45,20 +45,21 @@ export class QuizService {
       choiceCount = quizOptions.choiceCount ?? 3;
       oxCount = quizOptions.oxCount ?? 2;
     }
+    const difficulty = (typeof quizOptions === 'object' && quizOptions.difficulty) || 'normal';
 
-    console.log('[QuizService] Generating quizzes for content', contentId, 'choice:', choiceCount, 'ox:', oxCount);
+    console.log('[QuizService] Generating quizzes for content', contentId, 'choice:', choiceCount, 'ox:', oxCount, 'difficulty:', difficulty);
 
     const quizzes = [];
 
     // 4지선다 퀴즈 생성
     if (choiceCount > 0) {
-      const choiceQuizzes = await this.generateChoiceQuizzes(content, choiceCount);
+      const choiceQuizzes = await this.generateChoiceQuizzes(content, choiceCount, difficulty);
       quizzes.push(...choiceQuizzes);
     }
 
     // OX 퀴즈 생성
     if (oxCount > 0) {
-      const oxQuizzes = await this.generateOXQuizzes(content, oxCount);
+      const oxQuizzes = await this.generateOXQuizzes(content, oxCount, difficulty);
       quizzes.push(...oxQuizzes);
     }
 
@@ -90,6 +91,31 @@ export class QuizService {
   }
 
   /**
+   * 난이도별 프롬프트 지시 생성
+   */
+  getDifficultyInstruction(difficulty) {
+    switch (difficulty) {
+      case 'easy':
+        return `★★★ 난이도: 쉬움 ★★★
+- 콘텐츠에 직접 나오는 기본 사실과 용어를 묻는 문제를 출제하세요.
+- 본문을 읽으면 바로 답을 찾을 수 있는 수준이어야 합니다.
+- 단순 암기/이해 확인 문제 위주로 출제하세요.
+- 오답 선택지는 명확히 틀린 것으로 만들어 혼동을 최소화하세요.`;
+      case 'hard':
+        return `★★★ 난이도: 어려움 ★★★
+- 콘텐츠의 내용을 깊이 이해해야 풀 수 있는 응용/분석 문제를 출제하세요.
+- 여러 개념을 비교하거나, 상황에 적용하는 문제를 만드세요.
+- 오답 선택지를 그럴듯하게 만들어 깊은 이해 없이는 구분하기 어렵게 하세요.
+- "다음 중 올바르지 않은 것은?", "A와 B의 차이점은?", "~한 상황에서 적절한 것은?" 같은 고차 사고력 질문을 사용하세요.`;
+      default: // normal
+        return `★★★ 난이도: 보통 ★★★
+- 콘텐츠의 핵심 개념을 이해했는지 확인하는 문제를 출제하세요.
+- 단순 암기가 아닌, 개념의 의미와 특징을 묻는 수준이어야 합니다.
+- 오답 선택지는 적당히 그럴듯하게 만들되, 본문을 이해하면 구분 가능한 수준으로 하세요.`;
+    }
+  }
+
+  /**
    * Workers AI로 LLM 호출 (AI Gateway 사용)
    */
   async callWorkersAI(systemPrompt, userPrompt) {
@@ -117,7 +143,7 @@ export class QuizService {
   /**
    * 4지선다 퀴즈 생성 (최대 2회 재시도)
    */
-  async generateChoiceQuizzes(context, count) {
+  async generateChoiceQuizzes(context, count, difficulty = 'normal') {
     const systemPrompt = `당신은 교육 콘텐츠 전문가입니다. 주어진 내용을 바탕으로 4지선다 퀴즈를 생성해 주세요.
 
 반드시 아래 JSON 형식으로만 응답하세요:
@@ -157,7 +183,9 @@ export class QuizService {
 9. ★★★ 각 선택지는 반드시 짧고 명확한 하나의 개념/문장이어야 합니다. 쉼표로 여러 항목을 나열하지 마세요.
    - 나쁜 예: "오늘의 공부, 자기소개하는 글 읽기, 자기소개 담화 완성하기를 공부"
    - 좋은 예: "자기소개하는 글 읽기"
-10. 학습 목표 목록, 목차, 차례 등을 그대로 선택지로 사용하지 마세요. 핵심 개념에 대한 이해도를 측정하는 문제를 출제하세요.`;
+10. 학습 목표 목록, 목차, 차례 등을 그대로 선택지로 사용하지 마세요. 핵심 개념에 대한 이해도를 측정하는 문제를 출제하세요.
+
+${this.getDifficultyInstruction(difficulty)}`;
 
     const userPrompt = `다음 내용을 바탕으로 4지선다 퀴즈 ${count}개를 생성해 주세요.
 - 각 문제는 완전한 질문 형태로 작성
@@ -204,7 +232,7 @@ ${context.substring(0, 4000)}`;
   /**
    * OX 퀴즈 생성 (최대 3회 재시도)
    */
-  async generateOXQuizzes(context, count) {
+  async generateOXQuizzes(context, count, difficulty = 'normal') {
     const systemPrompt = `당신은 교육 콘텐츠 전문가입니다. 주어진 내용을 바탕으로 OX 퀴즈를 생성해 주세요.
 
 반드시 아래 JSON 형식으로만 응답하세요:
@@ -251,7 +279,9 @@ ${context.substring(0, 4000)}`;
 5. O와 X 문제를 적절히 섞어서 출제하세요
 6. 제공된 내용에 기반한 문제만 출제하세요
 7. JSON 배열만 출력하세요
-8. ★★★ PDF 메타데이터(작성자, 저자, 출판사, 발행일, 페이지 번호, 파일명, 문서 제목, 저작권 표시, ISBN, 머리글/바닥글 등)에 대한 문제는 절대 출제하지 마세요. 학습 내용 본문에 기반한 문제만 출제하세요.`;
+8. ★★★ PDF 메타데이터(작성자, 저자, 출판사, 발행일, 페이지 번호, 파일명, 문서 제목, 저작권 표시, ISBN, 머리글/바닥글 등)에 대한 문제는 절대 출제하지 마세요. 학습 내용 본문에 기반한 문제만 출제하세요.
+
+${this.getDifficultyInstruction(difficulty)}`;
 
     const userPrompt = `다음 내용을 바탕으로 OX 퀴즈 ${count}개를 생성해 주세요.
 - O와 X 문제를 골고루 섞어주세요
