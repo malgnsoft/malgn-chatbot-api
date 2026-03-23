@@ -925,10 +925,71 @@ export default {
         }
       }
     },
+    '/sessions/{id}/quiz': {
+      post: {
+        summary: '세션 퀴즈 추가',
+        description: '세션에 퀴즈를 직접 추가합니다. 콘텐츠 기반 자동 생성이 아닌 수동 추가.',
+        tags: ['Quizzes'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['quizType', 'question', 'answer'],
+                properties: {
+                  quizType: { type: 'string', enum: ['choice', 'ox'], description: '퀴즈 유형' },
+                  question: { type: 'string', description: '문제' },
+                  options: { type: 'array', items: { type: 'string' }, description: '4지선다 선택지 (choice 타입 필수, 4개)', example: ['HTTP', 'FTP', 'SMTP', 'SSH'] },
+                  answer: { type: 'string', description: '정답 (choice: 1~4, ox: O/X)', example: '1' },
+                  explanation: { type: 'string', description: '해설 (선택)' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          '201': {
+            description: '퀴즈 추가 성공',
+            content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, data: { $ref: '#/components/schemas/Quiz' }, message: { type: 'string' } } } } }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
+    '/sessions/{id}/quiz/{quizId}': {
+      delete: {
+        summary: '세션 퀴즈 삭제',
+        description: '세션에 직접 추가된 퀴즈를 삭제합니다.',
+        tags: ['Quizzes'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' },
+          { name: 'quizId', in: 'path', required: true, schema: { type: 'integer' }, description: '퀴즈 ID' }
+        ],
+        responses: {
+          '200': {
+            description: '삭제 성공',
+            content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, message: { type: 'string' } } } } }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
     '/sessions/{id}/quizzes': {
       get: {
         summary: '세션 퀴즈 조회',
-        description: '세션에 연결된 콘텐츠의 퀴즈를 조회합니다.\n자식 세션이면 부모의 콘텐츠 퀴즈를 조회합니다.',
+        description: '세션에 연결된 콘텐츠 퀴즈 + 세션 직접 추가 퀴즈를 모두 조회합니다.\n자식 세션이면 부모의 콘텐츠 퀴즈를 조회합니다.',
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [

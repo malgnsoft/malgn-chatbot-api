@@ -896,21 +896,16 @@ sessions.get('/:id/quizzes', async (c) => {
 
     const contentIds = (contents || []).map(c => c.content_id);
 
-    if (contentIds.length === 0) {
-      return c.json({
-        success: true,
-        data: {
-          sessionId: id,
-          quizzes: [],
-          total: 0
-        }
-      });
-    }
-
-    // 콘텐츠의 퀴즈 조회 (설정된 퀴즈 수 만큼 제한)
+    // 콘텐츠 퀴즈 + 세션 직접 추가 퀴즈를 병렬 조회
     const quizService = new QuizService(c.env);
     const totalQuizLimit = (session.choice_count || 3) + (session.ox_count || 2);
-    const quizzes = await quizService.getQuizzesByContentIds(contentIds, totalQuizLimit);
+
+    const [contentQuizzes, sessionQuizzes] = await Promise.all([
+      contentIds.length > 0 ? quizService.getQuizzesByContentIds(contentIds, totalQuizLimit) : [],
+      quizService.getQuizzesBySession(id)
+    ]);
+
+    const quizzes = [...contentQuizzes, ...sessionQuizzes];
 
     return c.json({
       success: true,
@@ -1058,6 +1053,82 @@ sessions.post('/:id/quizzes', async (c) => {
         message: '퀴즈 재생성 중 오류가 발생했습니다.'
       }
     }, 500);
+  }
+});
+
+/**
+ * POST /sessions/:id/quiz
+ * 세션에 퀴즈 직접 추가
+ */
+sessions.post('/:id/quiz', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'), 10);
+    if (isNaN(id) || id <= 0) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 세션 ID가 필요합니다.' } }, 400);
+    }
+
+    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    if (!session) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
+    }
+
+    const body = await c.req.json();
+    const { quizType, question, options, answer, explanation } = body;
+
+    // 필수 필드 검증
+    if (!quizType || !['choice', 'ox'].includes(quizType)) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'quizType은 choice 또는 ox이어야 합니다.' } }, 400);
+    }
+    if (!question || question.trim().length === 0) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'question은 필수입니다.' } }, 400);
+    }
+    if (!answer || answer.trim().length === 0) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'answer는 필수입니다.' } }, 400);
+    }
+    if (quizType === 'choice' && (!options || !Array.isArray(options) || options.length !== 4)) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'choice 타입은 4개의 options 배열이 필수입니다.' } }, 400);
+    }
+
+    const quizService = new QuizService(c.env);
+    const quiz = await quizService.addQuizToSession(id, { quizType, question, options, answer, explanation });
+
+    return c.json({
+      success: true,
+      data: quiz,
+      message: '퀴즈가 추가되었습니다.'
+    }, 201);
+
+  } catch (error) {
+    console.error('Add session quiz error:', error);
+    return c.json({ success: false, error: { code: 'INTERNAL_ERROR', message: '퀴즈 추가 중 오류가 발생했습니다.' } }, 500);
+  }
+});
+
+/**
+ * DELETE /sessions/:id/quiz/:quizId
+ * 세션 퀴즈 삭제
+ */
+sessions.delete('/:id/quiz/:quizId', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'), 10);
+    const quizId = parseInt(c.req.param('quizId'), 10);
+
+    if (isNaN(id) || id <= 0 || isNaN(quizId) || quizId <= 0) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 ID가 필요합니다.' } }, 400);
+    }
+
+    const quizService = new QuizService(c.env);
+    const deleted = await quizService.deleteSessionQuiz(quizId, id);
+
+    if (!deleted) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: '해당 세션의 퀴즈를 찾을 수 없습니다.' } }, 404);
+    }
+
+    return c.json({ success: true, message: '퀴즈가 삭제되었습니다.' });
+
+  } catch (error) {
+    console.error('Delete session quiz error:', error);
+    return c.json({ success: false, error: { code: 'INTERNAL_ERROR', message: '퀴즈 삭제 중 오류가 발생했습니다.' } }, 500);
   }
 });
 

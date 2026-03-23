@@ -545,4 +545,101 @@ ${context.substring(0, 4000)}`;
       .bind(contentId)
       .run();
   }
+
+  // ─── 세션 퀴즈 (수동 추가) ──────────────────────
+
+  /**
+   * 세션에 퀴즈 추가
+   * @param {number} sessionId - 세션 ID
+   * @param {Object} quiz - 퀴즈 데이터
+   * @returns {Object} 저장된 퀴즈
+   */
+  async addQuizToSession(sessionId, quiz) {
+    // 현재 세션 퀴즈의 마지막 position 조회
+    const last = await this.env.DB
+      .prepare('SELECT MAX(position) as maxPos FROM TB_QUIZ WHERE session_id = ? AND status = 1')
+      .bind(sessionId)
+      .first();
+    const position = (last?.maxPos || 0) + 1;
+
+    const options = quiz.options ? (typeof quiz.options === 'string' ? quiz.options : JSON.stringify(quiz.options)) : null;
+
+    const result = await this.env.DB
+      .prepare(`
+        INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position)
+        VALUES (0, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(sessionId, quiz.quizType, quiz.question, options, quiz.answer, quiz.explanation || null, position)
+      .run();
+
+    return {
+      id: result.meta.last_row_id,
+      sessionId,
+      quizType: quiz.quizType,
+      question: quiz.question,
+      options: quiz.options || null,
+      answer: quiz.answer,
+      explanation: quiz.explanation || null,
+      position
+    };
+  }
+
+  /**
+   * 세션의 직접 추가 퀴즈 조회
+   * @param {number} sessionId - 세션 ID
+   */
+  async getQuizzesBySession(sessionId) {
+    const { results } = await this.env.DB
+      .prepare(`
+        SELECT id, session_id, quiz_type, question, options, answer, explanation, position, created_at
+        FROM TB_QUIZ
+        WHERE session_id = ? AND status = 1
+        ORDER BY position ASC
+      `)
+      .bind(sessionId)
+      .all();
+
+    return (results || []).map(q => ({
+      id: q.id,
+      sessionId: q.session_id,
+      quizType: q.quiz_type,
+      question: q.question,
+      options: q.options ? JSON.parse(q.options) : null,
+      answer: q.answer,
+      explanation: q.explanation,
+      position: q.position,
+      createdAt: q.created_at
+    }));
+  }
+
+  /**
+   * 세션 퀴즈 개별 삭제
+   * @param {number} quizId - 퀴즈 ID
+   * @param {number} sessionId - 세션 ID (소유 확인)
+   */
+  async deleteSessionQuiz(quizId, sessionId) {
+    const quiz = await this.env.DB
+      .prepare('SELECT id FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1')
+      .bind(quizId, sessionId)
+      .first();
+
+    if (!quiz) return false;
+
+    await this.env.DB
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE id = ?')
+      .bind(quizId)
+      .run();
+    return true;
+  }
+
+  /**
+   * 세션의 직접 추가 퀴즈 전체 삭제
+   * @param {number} sessionId - 세션 ID
+   */
+  async deleteQuizzesBySession(sessionId) {
+    await this.env.DB
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND content_id = 0')
+      .bind(sessionId)
+      .run();
+  }
 }

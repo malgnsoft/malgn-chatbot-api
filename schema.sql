@@ -88,11 +88,14 @@ CREATE INDEX IF NOT EXISTS idx_session_content_session ON TB_SESSION_CONTENT(ses
 CREATE INDEX IF NOT EXISTS idx_session_content_content ON TB_SESSION_CONTENT(content_id);
 CREATE INDEX IF NOT EXISTS idx_session_content_status ON TB_SESSION_CONTENT(status);
 
--- TB_QUIZ: 퀴즈 (콘텐츠 기반 생성)
+-- TB_QUIZ: 퀴즈 (콘텐츠 기반 또는 세션 직접 추가)
 -- quiz_type: 'choice' (4지선다), 'ox' (OX퀴즈)
+-- content_id: 콘텐츠 기반 퀴즈 (자동 생성)
+-- session_id: 세션 직접 추가 퀴즈 (수동 추가)
 CREATE TABLE IF NOT EXISTS TB_QUIZ (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  content_id INTEGER NOT NULL,
+  content_id INTEGER NOT NULL DEFAULT 0,
+  session_id INTEGER,
   quiz_type TEXT NOT NULL CHECK (quiz_type IN ('choice', 'ox')),
   question TEXT NOT NULL,
   options TEXT,
@@ -106,4 +109,5 @@ CREATE TABLE IF NOT EXISTS TB_QUIZ (
 
 -- Index for quiz lookup
 CREATE INDEX IF NOT EXISTS idx_quiz_content ON TB_QUIZ(content_id, position);
+CREATE INDEX IF NOT EXISTS idx_quiz_session ON TB_QUIZ(session_id, position);
 CREATE INDEX IF NOT EXISTS idx_quiz_status ON TB_QUIZ(status);
