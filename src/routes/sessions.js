@@ -755,6 +755,74 @@ sessions.put('/:id', async (c) => {
 });
 
 /**
+ * PUT /sessions/:id/learning
+ * 학습 메타데이터만 업데이트 (learning_goal, learning_summary, recommended_questions)
+ */
+sessions.put('/:id/learning', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'), 10);
+
+    if (isNaN(id) || id <= 0) {
+      return c.json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: '유효한 세션 ID가 필요합니다.' }
+      }, 400);
+    }
+
+    const session = await c.env.DB
+      .prepare('SELECT id, parent_id, learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND status = 1')
+      .bind(id)
+      .first();
+
+    if (!session) {
+      return c.json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' }
+      }, 404);
+    }
+
+    const body = await c.req.json();
+
+    const learningGoal = body.learningGoal !== undefined
+      ? body.learningGoal
+      : session.learning_goal;
+    const learningSummary = body.learningSummary !== undefined
+      ? (typeof body.learningSummary === 'object' ? JSON.stringify(body.learningSummary) : body.learningSummary)
+      : session.learning_summary;
+    const recommendedQuestions = body.recommendedQuestions !== undefined
+      ? (typeof body.recommendedQuestions === 'object' ? JSON.stringify(body.recommendedQuestions) : body.recommendedQuestions)
+      : session.recommended_questions;
+
+    await c.env.DB
+      .prepare(`
+        UPDATE TB_SESSION
+        SET learning_goal = ?, learning_summary = ?, recommended_questions = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `)
+      .bind(learningGoal, learningSummary, recommendedQuestions, id)
+      .run();
+
+    return c.json({
+      success: true,
+      data: {
+        id,
+        learningGoal,
+        learningSummary,
+        recommendedQuestions
+      },
+      message: '학습 메타데이터가 업데이트되었습니다.'
+    });
+
+  } catch (error) {
+    console.error('Update learning data error:', error);
+    return c.json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: '학습 메타데이터 업데이트 중 오류가 발생했습니다.' }
+    }, 500);
+  }
+});
+
+/**
  * GET /sessions/:id/quizzes
  * 세션에 연결된 콘텐츠의 퀴즈 조회
  */

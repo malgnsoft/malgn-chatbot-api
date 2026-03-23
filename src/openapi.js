@@ -804,6 +804,84 @@ export default {
         }
       }
     },
+    '/sessions/{id}/learning': {
+      put: {
+        summary: '학습 메타데이터 업데이트',
+        description: '세션의 학습 목표, 요약, 추천 질문만 업데이트합니다.\n모든 필드 선택적, 미전달 시 기존값 유지, null 전달 시 초기화.\n배열/객체 전달 시 자동 JSON 변환.',
+        tags: ['Sessions'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  learningGoal: { type: 'string', nullable: true, description: '학습 목표' },
+                  learningSummary: {
+                    description: '학습 요약 (문자열 또는 배열)',
+                    nullable: true,
+                    oneOf: [
+                      { type: 'string' },
+                      { type: 'array', items: { type: 'string' } }
+                    ]
+                  },
+                  recommendedQuestions: {
+                    description: '추천 질문 (문자열 또는 Q&A 배열)',
+                    nullable: true,
+                    oneOf: [
+                      { type: 'string' },
+                      {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            question: { type: 'string' },
+                            answer: { type: 'string' }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: '업데이트 성공',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'integer' },
+                        learningGoal: { type: 'string', nullable: true },
+                        learningSummary: { type: 'string', nullable: true },
+                        recommendedQuestions: { type: 'string', nullable: true }
+                      }
+                    },
+                    message: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
     '/sessions/{id}/quizzes': {
       get: {
         summary: '세션 퀴즈 조회',
