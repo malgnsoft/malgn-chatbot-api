@@ -804,10 +804,10 @@ export default {
         }
       }
     },
-    '/sessions/{id}/learning': {
+    '/sessions/{id}/learning-goal': {
       put: {
-        summary: '학습 메타데이터 업데이트',
-        description: '세션의 학습 목표, 요약, 추천 질문만 업데이트합니다.\n모든 필드 선택적, 미전달 시 기존값 유지, null 전달 시 초기화.\n배열/객체 전달 시 자동 JSON 변환.',
+        summary: '학습 목표 업데이트',
+        description: '세션의 학습 목표를 업데이트합니다. null 전달 시 초기화.',
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -819,32 +819,51 @@ export default {
             'application/json': {
               schema: {
                 type: 'object',
+                required: ['learningGoal'],
                 properties: {
-                  learningGoal: { type: 'string', nullable: true, description: '학습 목표' },
+                  learningGoal: { type: 'string', nullable: true, description: '학습 목표', example: 'HTTP 프로토콜의 기본 개념을 이해한다.' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          '200': {
+            description: '업데이트 성공',
+            content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, data: { type: 'object', properties: { id: { type: 'integer' }, learningGoal: { type: 'string', nullable: true } } }, message: { type: 'string' } } } } }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
+    '/sessions/{id}/learning-summary': {
+      put: {
+        summary: '학습 요약 업데이트',
+        description: '세션의 학습 요약을 업데이트합니다. 배열 전달 시 자동 JSON 변환. null 전달 시 초기화.',
+        tags: ['Sessions'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['learningSummary'],
+                properties: {
                   learningSummary: {
                     description: '학습 요약 (문자열 또는 배열)',
                     nullable: true,
                     oneOf: [
                       { type: 'string' },
                       { type: 'array', items: { type: 'string' } }
-                    ]
-                  },
-                  recommendedQuestions: {
-                    description: '추천 질문 (문자열 또는 Q&A 배열)',
-                    nullable: true,
-                    oneOf: [
-                      { type: 'string' },
-                      {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                          properties: {
-                            question: { type: 'string' },
-                            answer: { type: 'string' }
-                          }
-                        }
-                      }
-                    ]
+                    ],
+                    example: ['HTTP는 클라이언트-서버 프로토콜이다.', 'REST는 HTTP 기반 아키텍처 스타일이다.']
                   }
                 }
               }
@@ -854,26 +873,50 @@ export default {
         responses: {
           '200': {
             description: '업데이트 성공',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    success: { type: 'boolean', example: true },
-                    data: {
-                      type: 'object',
-                      properties: {
-                        id: { type: 'integer' },
-                        learningGoal: { type: 'string', nullable: true },
-                        learningSummary: { type: 'string', nullable: true },
-                        recommendedQuestions: { type: 'string', nullable: true }
-                      }
-                    },
-                    message: { type: 'string' }
+            content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, data: { type: 'object', properties: { id: { type: 'integer' }, learningSummary: { type: 'string', nullable: true } } }, message: { type: 'string' } } } } }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
+    '/sessions/{id}/recommended-questions': {
+      put: {
+        summary: '추천 질문 업데이트',
+        description: '세션의 추천 질문을 업데이트합니다. Q&A 배열 전달 시 자동 JSON 변환. null 전달 시 초기화.',
+        tags: ['Sessions'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['recommendedQuestions'],
+                properties: {
+                  recommendedQuestions: {
+                    description: '추천 질문 (문자열 또는 Q&A 배열)',
+                    nullable: true,
+                    oneOf: [
+                      { type: 'string' },
+                      { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } } } }
+                    ],
+                    example: [{ question: 'GET과 POST의 차이는?', answer: 'GET은 조회, POST는 생성에 사용됩니다.' }]
                   }
                 }
               }
             }
+          }
+        },
+        responses: {
+          '200': {
+            description: '업데이트 성공',
+            content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, data: { type: 'object', properties: { id: { type: 'integer' }, recommendedQuestions: { type: 'string', nullable: true } } }, message: { type: 'string' } } } } }
           },
           '400': { $ref: '#/components/responses/ValidationError' },
           '401': { $ref: '#/components/responses/Unauthorized' },
