@@ -233,9 +233,7 @@ ${isEnglishLearning ? `
 - {"question": "광합성의 명반응과 암반응은 어떻게 연결되며, 각 단계에서 어떤 물질이 생성되나요?", "answer": "광합성은 크게 명반응과 암반응(캘빈 회로) 두 단계로 나뉘며 서로 밀접하게 연결됩니다. 명반응에서는 엽록체 틸라코이드 막에서 빛 에너지를 흡수하여 물을 분해하고, 이 과정에서 ATP와 NADPH를 생성합니다. 이 ATP와 NADPH는 암반응의 에너지원으로 사용됩니다. 암반응(캘빈 회로)에서는 스트로마에서 이산화탄소를 고정하여 포도당(C₆H₁₂O₆)을 합성합니다. 즉, 명반응이 에너지 변환을 담당하고 암반응이 탄소 고정을 담당하며, 두 단계가 협력하여 6CO₂ + 6H₂O → C₆H₁₂O₆ + 6O₂ 반응을 완성합니다."}
 
 [금지 - 절대 이렇게 생성하지 마세요]
-- 물결표(~) 사용 금지
 - "~란/은/는 무엇인가요?" 같은 단순 정의 질문 금지
-- "~란/은/는" 같은 템플릿 텍스트 금지
 - 콘텐츠에 없는 용어로 질문 금지
 - 답변 없이 질문만 생성하는 것 금지
 - "~입니다." 한 문장으로 끝나는 짧은 답변 금지
@@ -300,6 +298,7 @@ ${context}`;
       let learningSummary = data.learningSummary || null;
       let recommendedQuestions = data.recommendedQuestions || null;
 
+
       if (Array.isArray(learningSummary) && learningSummary.length > summaryCount) {
         console.log(`[LearningService] Truncating summary from ${learningSummary.length} to ${summaryCount}`);
         learningSummary = learningSummary.slice(0, summaryCount);
@@ -319,14 +318,14 @@ ${context}`;
           return null;
         }).filter(q => q !== null);
 
-        // 물결표(~)가 포함된 템플릿 질문 필터링
-        const hasTemplatePlaceholder = recommendedQuestions.some(q => q.question.includes('~'));
-        // "추천 질문 1" 같은 플레이스홀더 필터링
+        // 플레이스홀더 템플릿 질문 필터링
+        // "추천 질문 1", "질문 1에 대한 간결한 답변" 같은 프롬프트 예시가 그대로 나온 경우만 제거
         const hasPlaceholder = recommendedQuestions.some(q =>
-          /^추천 질문 \d+$/.test(q.question.trim())
+          /^추천 질문 \d+$/.test(q.question.trim()) ||
+          /^질문 \d+에 대한/.test(q.answer?.trim() || '')
         );
-        if (hasTemplatePlaceholder || hasPlaceholder) {
-          console.warn('[LearningService] Template/placeholder text detected in questions, setting to null');
+        if (hasPlaceholder) {
+          console.warn('[LearningService] Placeholder text detected in questions, setting to null');
           recommendedQuestions = null;
         }
 

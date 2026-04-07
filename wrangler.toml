@@ -11,6 +11,7 @@ name = "malgn-chatbot-api"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
+account_id = "d2b8c5524b7259214fa302f1fecb4ad6"
 
 # ============================================
 # Local Development (기본 환경)
@@ -28,11 +29,11 @@ gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 [[d1_databases]]
 binding = "DB"
 database_name = "malgn-chatbot-db"
-database_id = "cafb4778-93be-4b85-ba19-78f6b7161f1d"
+database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "41fca93af7a84d53947590f5335caa0b"
+id = "fa3a96d4935841acb045a3b5116b5d6a"
 
 [[r2_buckets]]
 binding = "BUCKET"
@@ -59,11 +60,11 @@ gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 [[env.user1.d1_databases]]
 binding = "DB"
 database_name = "malgn-chatbot-db"
-database_id = "cafb4778-93be-4b85-ba19-78f6b7161f1d"
+database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"
-id = "41fca93af7a84d53947590f5335caa0b"
+id = "fa3a96d4935841acb045a3b5116b5d6a"
 
 [[env.user1.r2_buckets]]
 binding = "BUCKET"
@@ -90,11 +91,11 @@ gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 [[env.user2.d1_databases]]
 binding = "DB"
 database_name = "malgn-chatbot-db-user2"
-database_id = "80ef8a40-6a62-4159-96ab-d46f611d7756"
+database_id = "e18e63b7-a10e-4c41-b40d-bb62d6cc3deb"
 
 [[env.user2.kv_namespaces]]
 binding = "KV"
-id = "a1433a99c86749f086aeec603eeb9a86"
+id = "720bdf6a21524611a06d817ed63b9092"
 
 [[env.user2.r2_buckets]]
 binding = "BUCKET"

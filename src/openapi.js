@@ -946,7 +946,8 @@ export default {
                   question: { type: 'string', description: '문제' },
                   options: { type: 'array', items: { type: 'string' }, description: '4지선다 선택지 (choice 타입 필수, 4개)', example: ['HTTP', 'FTP', 'SMTP', 'SSH'] },
                   answer: { type: 'string', description: '정답 (choice: 1~4, ox: O/X)', example: '1' },
-                  explanation: { type: 'string', description: '해설 (선택)' }
+                  explanation: { type: 'string', description: '해설 (선택)' },
+                  position: { type: 'integer', description: '순서 (선택, 미지정 시 마지막+1 자동 배정)' }
                 }
               }
             }
@@ -965,6 +966,26 @@ export default {
       }
     },
     '/sessions/{id}/quiz/{quizId}': {
+      get: {
+        summary: '세션 퀴즈 단건 조회',
+        description: '세션의 특정 퀴즈를 조회합니다. 자식 세션이면 부모의 퀴즈를 조회합니다.',
+        tags: ['Quizzes'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' },
+          { name: 'quizId', in: 'path', required: true, schema: { type: 'integer' }, description: '퀴즈 ID' }
+        ],
+        responses: {
+          '200': {
+            description: '퀴즈 조회 성공',
+            content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, data: { $ref: '#/components/schemas/Quiz' } } } } }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      },
       put: {
         summary: '세션 퀴즈 수정',
         description: '세션에 직접 추가된 퀴즈를 수정합니다. 전달된 필드만 업데이트됩니다.',
@@ -985,7 +1006,8 @@ export default {
                   question: { type: 'string', description: '문제' },
                   options: { type: 'array', items: { type: 'string' }, description: '4지선다 선택지 (choice 타입, 4개)' },
                   answer: { type: 'string', description: '정답 (choice: 1~4, ox: O/X)' },
-                  explanation: { type: 'string', nullable: true, description: '해설' }
+                  explanation: { type: 'string', nullable: true, description: '해설' },
+                  position: { type: 'integer', description: '순서 (선택)' }
                 }
               }
             }
@@ -1100,6 +1122,43 @@ export default {
                       }
                     },
                     message: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          '400': { $ref: '#/components/responses/ValidationError' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
+    '/sessions/{id}/quizzes/reorder': {
+      put: {
+        summary: '세션 퀴즈 순서 재정렬',
+        description: '세션의 모든 퀴즈를 4지선다 → OX 순서로 자동 정렬하고 position을 순차 갱신합니다. Body 불필요.',
+        tags: ['Quizzes'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
+        ],
+        responses: {
+          '200': {
+            description: '순서 변경 성공',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        sessionId: { type: 'integer' },
+                        reordered: { type: 'integer' }
+                      }
+                    }
                   }
                 }
               }

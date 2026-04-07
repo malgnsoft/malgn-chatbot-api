@@ -361,7 +361,7 @@ sessions.post('/', async (c) => {
       }
     }
 
-    // 퀴즈 생성 준비 (퀴즈 수가 0이면 스킵)
+    // 퀴즈 생성 준비 (퀴즈 수가 0이면 스킵) — 세션 전체 기준으로 설정 수만큼만 생성
     const quizService = new QuizService(c.env);
     const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
     const quizOptions = {
@@ -370,45 +370,31 @@ sessions.post('/', async (c) => {
       difficulty: settings.quizDifficulty || 'normal'
     };
 
-    let quizPromises = [];
+    let quizPromise = null;
     if (totalQuizCount > 0) {
+      // 모든 콘텐츠 텍스트를 합쳐서 세션 전체 기준으로 퀴즈 생성
+      const contentTexts = [];
       for (const contentId of contentIds) {
-        const existingQuizzes = await quizService.getQuizzesByContent(contentId);
-        const existingChoiceCount = existingQuizzes.filter(q => q.quiz_type === 'choice').length;
-        const existingOxCount = existingQuizzes.filter(q => q.quiz_type === 'ox').length;
-        const needsRegeneration = existingQuizzes.length === 0
-          || existingChoiceCount !== quizOptions.choiceCount
-          || existingOxCount !== quizOptions.oxCount;
-
-        if (needsRegeneration) {
-          const content = await c.env.DB
-            .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
-            .bind(contentId)
-            .first();
-          if (content?.content && content.content.trim().length >= 100) {
-            // 기존 퀴즈가 있으면 삭제 후 재생성
-            if (existingQuizzes.length > 0) {
-              console.log(`[Session] Quiz count mismatch for content ${contentId}: choice ${existingChoiceCount}→${quizOptions.choiceCount}, ox ${existingOxCount}→${quizOptions.oxCount}. Regenerating.`);
-              await c.env.DB
-                .prepare('UPDATE TB_QUIZ SET status = -1 WHERE content_id = ? AND status = 1')
-                .bind(contentId)
-                .run();
-            }
-            quizPromises.push(
-              quizService.generateQuizzesForContent(contentId, content.content, quizOptions)
-                .catch(err => console.error('[Session] Quiz generation failed for content', contentId, err.message))
-            );
-          }
+        const content = await c.env.DB
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
+          .bind(contentId)
+          .first();
+        if (content?.content && content.content.trim().length >= 100) {
+          contentTexts.push(content.content);
         }
+      }
+      const mergedContent = contentTexts.join('\n\n---\n\n');
+      if (mergedContent.trim().length >= 100) {
+        quizPromise = quizService.generateQuizzesForContent(contentIds[0], mergedContent, quizOptions, sessionId)
+          .catch(err => console.error('[Session] Quiz generation failed:', err.message));
       }
     }
 
     // 학습 데이터 + 퀴즈 생성 병렬 실행 (퀴즈 완료까지 대기)
     const learningService = new LearningService(c.env);
-    const [learningData] = await Promise.all([
-      learningService.generateAndStoreLearningData(sessionId, contentIds, settings),
-      ...quizPromises
-    ]);
+    const parallelTasks = [learningService.generateAndStoreLearningData(sessionId, contentIds, settings)];
+    if (quizPromise) parallelTasks.push(quizPromise);
+    const [learningData] = await Promise.all(parallelTasks);
 
     // 생성된 세션 조회 (학습 데이터 포함)
     const session = await c.env.DB
@@ -885,31 +871,12 @@ sessions.get('/:id/quizzes', async (c) => {
       }, 404);
     }
 
-    // 자식 세션이면 부모의 콘텐츠로 퀴즈 조회
-    const contentSourceId = session.parent_id > 0 ? session.parent_id : id;
+    // 자식 세션이면 부모 세션의 퀴즈 조회
+    const quizSessionId = session.parent_id > 0 ? session.parent_id : id;
 
-    // 세션에 연결된 콘텐츠 ID 조회
-    const { results: contents } = await c.env.DB
-      .prepare(`
-        SELECT content_id
-        FROM TB_SESSION_CONTENT
-        WHERE session_id = ? AND status = 1
-      `)
-      .bind(contentSourceId)
-      .all();
-
-    const contentIds = (contents || []).map(c => c.content_id);
-
-    // 콘텐츠 퀴즈 + 세션 직접 추가 퀴즈를 병렬 조회
+    // 세션 기준 퀴즈 조회
     const quizService = new QuizService(c.env);
-    const totalQuizLimit = (session.choice_count || 3) + (session.ox_count || 2);
-
-    const [contentQuizzes, sessionQuizzes] = await Promise.all([
-      contentIds.length > 0 ? quizService.getQuizzesByContentIds(contentIds, totalQuizLimit) : [],
-      quizService.getQuizzesBySession(id)
-    ]);
-
-    const quizzes = [...contentQuizzes, ...sessionQuizzes];
+    const quizzes = await quizService.getQuizzesBySession(quizSessionId);
 
     return c.json({
       success: true,
@@ -927,6 +894,91 @@ sessions.get('/:id/quizzes', async (c) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: '퀴즈 조회 중 오류가 발생했습니다.'
+      }
+    }, 500);
+  }
+});
+
+/**
+ * PUT /sessions/:id/quizzes/reorder
+ * 세션 퀴즈 순서 재정렬
+ *
+ * Body 불필요 - 세션의 모든 퀴즈를 4지선다 → OX 순서로 자동 정렬
+ */
+sessions.put('/:id/quizzes/reorder', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'), 10);
+
+    if (isNaN(id) || id <= 0) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: '유효한 세션 ID가 필요합니다.'
+        }
+      }, 400);
+    }
+
+    // 세션 존재 확인
+    const session = await c.env.DB
+      .prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1')
+      .bind(id)
+      .first();
+
+    if (!session) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'NOT_FOUND',
+          message: '세션을 찾을 수 없습니다.'
+        }
+      }, 404);
+    }
+
+    const quizSessionId = session.parent_id > 0 ? session.parent_id : id;
+
+    // 세션의 모든 퀴즈 조회 (4지선다 → OX, 생성일 순)
+    const { results: quizzes } = await c.env.DB
+      .prepare(`
+        SELECT id FROM TB_QUIZ
+        WHERE session_id = ? AND status = 1
+        ORDER BY position ASC, created_at ASC
+      `)
+      .bind(quizSessionId)
+      .all();
+
+    if (!quizzes || quizzes.length === 0) {
+      return c.json({
+        success: true,
+        data: { sessionId: id, reordered: 0 }
+      });
+    }
+
+    // position 순차 갱신
+    const updates = quizzes.map((quiz, index) =>
+      c.env.DB
+        .prepare('UPDATE TB_QUIZ SET position = ? WHERE id = ?')
+        .bind(index + 1, quiz.id)
+        .run()
+    );
+
+    await Promise.all(updates);
+
+    return c.json({
+      success: true,
+      data: {
+        sessionId: id,
+        reordered: quizzes.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Reorder quizzes error:', error);
+    return c.json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: '퀴즈 순서 변경 중 오류가 발생했습니다.'
       }
     }, 500);
   }
@@ -1022,17 +1074,20 @@ sessions.post('/:id/quizzes', async (c) => {
     const quizService = new QuizService(c.env);
     const allQuizzes = [];
 
-    // 각 콘텐츠별로 퀴즈 재생성
-    for (const content of contents) {
-      // 기존 퀴즈 삭제
-      await quizService.deleteQuizzesByContent(content.id);
+    // 기존 세션 퀴즈 삭제 (세션 기준)
+    await c.env.DB
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1')
+      .bind(id)
+      .run();
 
-      // 새 퀴즈 생성
+    // 각 콘텐츠별로 퀴즈 재생성 (세션에 귀속)
+    for (const content of contents) {
       if (content.content && content.content.trim().length > 0) {
         const quizzes = await quizService.generateQuizzesForContent(
           content.id,
           content.content,
-          quizOptions
+          quizOptions,
+          id
         );
         allQuizzes.push(...quizzes);
       }
@@ -1077,7 +1132,7 @@ sessions.post('/:id/quiz', async (c) => {
     }
 
     const body = await c.req.json();
-    const { quizType, question, options, answer, explanation } = body;
+    const { quizType, question, options, answer, explanation, position } = body;
 
     // 필수 필드 검증
     if (!quizType || !['choice', 'ox'].includes(quizType)) {
@@ -1094,7 +1149,25 @@ sessions.post('/:id/quiz', async (c) => {
     }
 
     const quizService = new QuizService(c.env);
-    const quiz = await quizService.addQuizToSession(id, { quizType, question, options, answer, explanation });
+    const quiz = await quizService.addQuizToSession(id, { quizType, question, options, answer, explanation, position });
+
+    // 퀴즈 추가 후 세션 퀴즈 재정렬 (4지선다 → OX, 생성일 순)
+    const { results: allQuizzes } = await c.env.DB
+      .prepare(`
+        SELECT id FROM TB_QUIZ
+        WHERE session_id = ? AND status = 1
+        ORDER BY position ASC, created_at ASC
+      `)
+      .bind(id)
+      .all();
+
+    if (allQuizzes && allQuizzes.length > 0) {
+      await Promise.all(
+        allQuizzes.map((q, index) =>
+          c.env.DB.prepare('UPDATE TB_QUIZ SET position = ? WHERE id = ?').bind(index + 1, q.id).run()
+        )
+      );
+    }
 
     return c.json({
       success: true,
@@ -1104,7 +1177,58 @@ sessions.post('/:id/quiz', async (c) => {
 
   } catch (error) {
     console.error('Add session quiz error:', error);
-    return c.json({ success: false, error: { code: 'INTERNAL_ERROR', message: '퀴즈 추가 중 오류가 발생했습니다.' } }, 500);
+    return c.json({ success: false, error: { code: 'INTERNAL_ERROR', message: '퀴즈 추가 중 오류가 발생했습니다.', detail: error.message } }, 500);
+  }
+});
+
+/**
+ * GET /sessions/:id/quiz/:quizId
+ * 세션 퀴즈 단건 조회
+ */
+sessions.get('/:id/quiz/:quizId', async (c) => {
+  try {
+    const id = parseInt(c.req.param('id'), 10);
+    const quizId = parseInt(c.req.param('quizId'), 10);
+
+    if (isNaN(id) || id <= 0 || isNaN(quizId) || quizId <= 0) {
+      return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 ID가 필요합니다.' } }, 400);
+    }
+
+    const session = await c.env.DB.prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    if (!session) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
+    }
+
+    const quizSessionId = session.parent_id > 0 ? session.parent_id : id;
+
+    const quiz = await c.env.DB
+      .prepare('SELECT id, session_id, content_id, quiz_type, question, options, answer, explanation, position, created_at FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1')
+      .bind(quizId, quizSessionId)
+      .first();
+
+    if (!quiz) {
+      return c.json({ success: false, error: { code: 'NOT_FOUND', message: '퀴즈를 찾을 수 없습니다.' } }, 404);
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        id: quiz.id,
+        sessionId: quiz.session_id,
+        contentId: quiz.content_id,
+        quizType: quiz.quiz_type,
+        question: quiz.question,
+        options: quiz.options ? JSON.parse(quiz.options) : null,
+        answer: quiz.answer,
+        explanation: quiz.explanation,
+        position: quiz.position,
+        createdAt: quiz.created_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Get session quiz error:', error);
+    return c.json({ success: false, error: { code: 'INTERNAL_ERROR', message: '퀴즈 조회 중 오류가 발생했습니다.' } }, 500);
   }
 });
 
@@ -1122,7 +1246,7 @@ sessions.put('/:id/quiz/:quizId', async (c) => {
     }
 
     const body = await c.req.json();
-    const { quizType, question, options, answer, explanation } = body;
+    const { quizType, question, options, answer, explanation, position } = body;
 
     if (quizType && !['choice', 'ox'].includes(quizType)) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'quizType은 choice 또는 ox이어야 합니다.' } }, 400);
@@ -1132,10 +1256,28 @@ sessions.put('/:id/quiz/:quizId', async (c) => {
     }
 
     const quizService = new QuizService(c.env);
-    const updated = await quizService.updateSessionQuiz(quizId, id, { quizType, question, options, answer, explanation });
+    const updated = await quizService.updateSessionQuiz(quizId, id, { quizType, question, options, answer, explanation, position });
 
     if (!updated) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '해당 세션의 퀴즈를 찾을 수 없습니다.' } }, 404);
+    }
+
+    // 수정 후 세션 퀴즈 재정렬 (4지선다 → OX → position → 생성일 순)
+    const { results: allQuizzes } = await c.env.DB
+      .prepare(`
+        SELECT id FROM TB_QUIZ
+        WHERE session_id = ? AND status = 1
+        ORDER BY position ASC, created_at ASC
+      `)
+      .bind(id)
+      .all();
+
+    if (allQuizzes && allQuizzes.length > 0) {
+      await Promise.all(
+        allQuizzes.map((q, index) =>
+          c.env.DB.prepare('UPDATE TB_QUIZ SET position = ? WHERE id = ?').bind(index + 1, q.id).run()
+        )
+      );
     }
 
     return c.json({ success: true, data: updated, message: '퀴즈가 수정되었습니다.' });
@@ -1164,6 +1306,24 @@ sessions.delete('/:id/quiz/:quizId', async (c) => {
 
     if (!deleted) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '해당 세션의 퀴즈를 찾을 수 없습니다.' } }, 404);
+    }
+
+    // 삭제 후 세션 퀴즈 재정렬 (position → 생성일 순)
+    const { results: allQuizzes } = await c.env.DB
+      .prepare(`
+        SELECT id FROM TB_QUIZ
+        WHERE session_id = ? AND status = 1
+        ORDER BY position ASC, created_at ASC
+      `)
+      .bind(id)
+      .all();
+
+    if (allQuizzes && allQuizzes.length > 0) {
+      await Promise.all(
+        allQuizzes.map((q, index) =>
+          c.env.DB.prepare('UPDATE TB_QUIZ SET position = ? WHERE id = ?').bind(index + 1, q.id).run()
+        )
+      );
     }
 
     return c.json({ success: true, message: '퀴즈가 삭제되었습니다.' });
@@ -1261,6 +1421,10 @@ sessions.delete('/:id', async (c) => {
           .bind(child.id)
           .run();
         await c.env.DB
+          .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1')
+          .bind(child.id)
+          .run();
+        await c.env.DB
           .prepare('UPDATE TB_SESSION SET status = -1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .bind(child.id)
           .run();
@@ -1279,8 +1443,11 @@ sessions.delete('/:id', async (c) => {
       .bind(id)
       .run();
 
-    // 퀴즈는 콘텐츠 기반이므로 세션 삭제 시 영향 없음
-    // (TB_QUIZ는 content_id를 사용)
+    // 세션 퀴즈 soft delete
+    await c.env.DB
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1')
+      .bind(id)
+      .run();
 
     // Vectorize에서 학습 임베딩 삭제
     const learningService = new LearningService(c.env);

@@ -26,6 +26,8 @@ export class EmbeddingService {
       // Workers AI를 사용하여 임베딩 생성
       const result = await this.env.AI.run(this.model, {
         text: text
+      }, {
+        gateway: { id: 'malgn-chatbot' }
       });
 
       if (result && result.data && result.data.length > 0) {

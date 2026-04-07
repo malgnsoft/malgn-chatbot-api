@@ -15,15 +15,16 @@ export class QuizService {
   }
 
   /**
-   * 콘텐츠 기반으로 퀴즈 생성 (콘텐츠 업로드 시 호출)
+   * 콘텐츠 기반으로 퀴즈 생성 (세션 생성 시 호출)
    * @param {number} contentId - 콘텐츠 ID
    * @param {string} content - 콘텐츠 텍스트
    * @param {Object|number} quizOptions - 퀴즈 옵션 또는 총 퀴즈 수 (하위 호환)
    * @param {number} quizOptions.choiceCount - 4지선다 퀴즈 수 (기본 3개)
    * @param {number} quizOptions.oxCount - OX 퀴즈 수 (기본 2개)
+   * @param {number} sessionId - 세션 ID (퀴즈를 세션에 귀속)
    * @returns {Promise<Object[]>} - 생성된 퀴즈 배열
    */
-  async generateQuizzesForContent(contentId, content, quizOptions = {}) {
+  async generateQuizzesForContent(contentId, content, quizOptions = {}, sessionId = null) {
     if (!content || content.trim().length === 0) {
       console.log('[QuizService] No content provided, skipping quiz generation');
       return [];
@@ -54,22 +55,22 @@ export class QuizService {
 
     const quizzes = [];
 
-    // 4지선다 퀴즈 생성
+    // 4지선다 퀴즈 생성 (요청 수만큼만 사용)
     if (choiceCount > 0) {
       const choiceQuizzes = await this.generateChoiceQuizzes(content, choiceCount, difficulty);
-      quizzes.push(...choiceQuizzes);
+      quizzes.push(...choiceQuizzes.slice(0, choiceCount));
     }
 
-    // OX 퀴즈 생성
+    // OX 퀴즈 생성 (요청 수만큼만 사용)
     if (oxCount > 0) {
       const oxQuizzes = await this.generateOXQuizzes(content, oxCount, difficulty);
-      quizzes.push(...oxQuizzes);
+      quizzes.push(...oxQuizzes.slice(0, oxCount));
     }
 
     // DB에 저장
     if (quizzes.length > 0) {
-      await this.saveQuizzesForContent(contentId, quizzes);
-      console.log('[QuizService] Saved', quizzes.length, 'quizzes for content', contentId);
+      await this.saveQuizzesForContent(contentId, quizzes, sessionId);
+      console.log('[QuizService] Saved', quizzes.length, 'quizzes for content', contentId, 'session', sessionId);
     }
 
     return quizzes;
@@ -171,6 +172,38 @@ export class QuizService {
   }
 
   /**
+   * 수학/과학 콘텐츠 감지
+   */
+  detectMathScience(content) {
+    const sample = content.substring(0, 2000);
+    const mathPatterns = [
+      /방정식|연립|미지수|함수|그래프/,
+      /수학|산수|계산|풀이/,
+      /\d+\s*[+\-×÷=]\s*\d+/,
+      /[xyz]\s*[+\-=]\s*\d+/i,
+      /분수|소수|백분율|비율/,
+      /삼각형|사각형|원|도형|넓이|부피/,
+      /속력|거리|시간|속도/,
+      /물리|화학|과학|에너지|힘|질량/,
+    ];
+    return mathPatterns.some(p => p.test(sample));
+  }
+
+  /**
+   * 수학/과학 퀴즈 추가 지시사항
+   */
+  getMathScienceInstruction() {
+    return `
+★★★ 수학/과학 퀴즈 특별 규칙 ★★★
+- 교안의 예시 문제를 그대로 복사하지 마세요. 같은 개념을 활용한 새로운 수치/조건의 문제를 만드세요.
+- 풀이 방법이나 단계를 묻는 문제 금지. 실제로 계산하여 답을 구하는 문제를 출제하세요.
+- 교안의 보기 이름(기억, 니은, 디굿, 리울 등)이나 문제 번호를 사용하지 마세요.
+- 좋은 예: "2x + y = 7이고 x - y = 2일 때, x의 값은?"
+- 나쁜 예: "연립방정식을 풀 때 가장 중요한 고려 사항은?"
+`;
+  }
+
+  /**
    * 영어 학습용 퀴즈 추가 지시사항
    */
   getEnglishLearningInstruction() {
@@ -233,9 +266,9 @@ export class QuizService {
    */
   async generateChoiceQuizzes(context, count, difficulty = 'normal') {
     const isEnglishLearning = this.detectEnglishLearning(context);
-    if (isEnglishLearning) {
-      console.log('[QuizService] English learning content detected');
-    }
+    const isMathScience = this.detectMathScience(context);
+    if (isEnglishLearning) console.log('[QuizService] English learning content detected');
+    if (isMathScience) console.log('[QuizService] Math/Science content detected');
 
     const systemPrompt = `교육 콘텐츠 기반 4지선다 퀴즈를 JSON으로 생성하세요.
 
@@ -244,13 +277,16 @@ export class QuizService {
 
 핵심 규칙:
 1. 질문만 읽고 답을 고를 수 있어야 합니다. 필요한 조건/수치를 질문에 모두 포함하세요.
-2. 핵심 학습 내용만 출제하세요. 강의 안내, 훈련 순서, 인사말, 목차, 메타데이터 문제는 금지입니다.
-3. options에 정확히 4개 선택지를 포함하세요. answer는 정답 번호(1~4)입니다.
-4. 수학/과학 콘텐츠에서 question, options, explanation 모두 수식은 LaTeX로 작성하세요. 예: \\( x + y = 5 \\)
-5. JSON 배열만 출력하세요. 다른 텍스트 없이 JSON만 응답하세요.
+2. 질문은 2~3문장 이내로 짧고 명확하게 작성하세요. 풀이 과정, 해설, 다른 보기에 대한 설명을 질문에 절대 포함하지 마세요.
+3. 교안의 보기 이름(기억, 니은, 디굿, 리우 등)이나 문제 번호(1번 문제, 2번 문제)를 사용하지 마세요. 구체적인 수식이나 값으로 직접 제시하세요.
+4. 핵심 학습 내용만 출제하세요. 강의 안내, 훈련 순서, 인사말, 목차, 메타데이터 문제는 금지입니다.
+5. options에 정확히 4개 선택지를 포함하세요. answer는 정답 번호(1~4)입니다.
+6. 수학/과학 콘텐츠에서 question, options, explanation 모두 수식은 LaTeX로 작성하세요. 예: \\( x + y = 5 \\)
+7. JSON 배열만 출력하세요. 다른 텍스트 없이 JSON만 응답하세요.
 
 ${this.getDifficultyInstruction(difficulty)}
-${isEnglishLearning ? this.getEnglishLearningInstruction() : ''}`;
+${isEnglishLearning ? this.getEnglishLearningInstruction() : ''}
+${isMathScience ? this.getMathScienceInstruction() : ''}`;
 
     const userPrompt = `다음 내용을 바탕으로 4지선다 퀴즈 ${count}개를 생성해 주세요.
 - 각 문제는 완전한 질문 형태로 작성
@@ -304,6 +340,7 @@ ${context.substring(0, 4000)}`;
    */
   async generateOXQuizzes(context, count, difficulty = 'normal') {
     const isEnglishLearning = this.detectEnglishLearning(context);
+    const isMathScience = this.detectMathScience(context);
 
     const englishOXExamples = isEnglishLearning ? `
 ★★★ 영어 학습 OX 퀴즈 예시 ★★★
@@ -327,12 +364,15 @@ ${context.substring(0, 4000)}`;
 핵심 규칙:
 1. "~이다.", "~한다.", "~있다." 등으로 끝나는 서술문만 작성하세요. 의문문(?) 금지.
 2. 서술문만 읽고 O/X 판단이 가능해야 합니다. O와 X를 골고루 섞으세요.
-3. 핵심 학습 내용만 출제하세요. 강의 안내, 훈련 순서, 인사말, 목차, 메타데이터 문제는 금지입니다.
-4. 수학/과학 콘텐츠에서 question, explanation 모두 수식은 LaTeX로 작성하세요. 예: \\( x + y = 5 \\)
-5. JSON 배열만 출력하세요. 다른 텍스트 없이 JSON만 응답하세요.
+3. 서술문은 1~2문장 이내로 짧고 명확하게 작성하세요. 풀이 과정이나 해설을 서술문에 포함하지 마세요.
+4. 교안의 보기 이름이나 문제 번호를 사용하지 마세요. 구체적인 수식이나 값으로 직접 제시하세요.
+5. 핵심 학습 내용만 출제하세요. 강의 안내, 훈련 순서, 인사말, 목차, 메타데이터 문제는 금지입니다.
+6. 수학/과학 콘텐츠에서 question, explanation 모두 수식은 LaTeX로 작성하세요. 예: \\( x + y = 5 \\)
+7. JSON 배열만 출력하세요. 다른 텍스트 없이 JSON만 응답하세요.
 ${englishOXExamples}
 ${this.getDifficultyInstruction(difficulty)}
-${isEnglishLearning ? this.getEnglishLearningInstruction() : ''}`;
+${isEnglishLearning ? this.getEnglishLearningInstruction() : ''}
+${isMathScience ? this.getMathScienceInstruction() : ''}`;
 
     const userPrompt = `다음 내용을 바탕으로 OX 퀴즈 ${count}개를 생성해 주세요.
 - O와 X 문제를 골고루 섞어주세요
@@ -439,37 +479,45 @@ ${context.substring(0, 4000)}`;
       /몇\s*번.*문제.*풀/,
       /번부터.*번까지/,
       /문제를\s*풀어야/,
-      /\d+번\s*문제를?\s*참고/,          // "5번 문제를 참고", "2번 문제 참고"
-      /\(\s*\d+번\s*문제/,              // "(5번 문제..."
+      /\d+번\s*문제를?\s*참고/,
+      /\(\s*\d+번\s*문제/,
       /학습\s*목표/,
       /PDF|메타데이터|페이지\s*수/,
       /강사|선생님.*소개/,
       /수업\s*절차|수업\s*순서/,
     ];
 
+    // 질문이 너무 긴 퀴즈 필터링 (200자 초과)
+    const MAX_QUESTION_LENGTH = 200;
+
     return quizzes.filter(q => {
       const text = q.question || '';
       const blocked = blockedPatterns.some(p => p.test(text));
+      const tooLong = text.length > MAX_QUESTION_LENGTH;
       if (blocked) {
         console.log('[QuizService] Filtered irrelevant quiz:', text.substring(0, 60));
       }
-      return !blocked;
+      if (tooLong) {
+        console.log('[QuizService] Filtered long quiz (%d chars):', text.length, text.substring(0, 60));
+      }
+      return !blocked && !tooLong;
     });
   }
 
   /**
-   * 퀴즈 DB 저장 (콘텐츠 기반)
+   * 퀴즈 DB 저장 (콘텐츠 + 세션 기반)
    */
-  async saveQuizzesForContent(contentId, quizzes) {
+  async saveQuizzesForContent(contentId, quizzes, sessionId = null) {
     for (let i = 0; i < quizzes.length; i++) {
       const quiz = quizzes[i];
       await this.env.DB
         .prepare(`
-          INSERT INTO TB_QUIZ (content_id, quiz_type, question, options, answer, explanation, position)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           contentId,
+          sessionId,
           quiz.quiz_type,
           quiz.question,
           quiz.options,
@@ -566,25 +614,54 @@ ${context.substring(0, 4000)}`;
    * @returns {Object} 저장된 퀴즈
    */
   async addQuizToSession(sessionId, quiz) {
-    // 현재 세션 퀴즈의 마지막 position 조회
-    const last = await this.env.DB
-      .prepare('SELECT MAX(position) as maxPos FROM TB_QUIZ WHERE session_id = ? AND status = 1')
-      .bind(sessionId)
-      .first();
-    const position = (last?.maxPos || 0) + 1;
+    let position;
+    if (quiz.position !== undefined && quiz.position !== null && quiz.position > 0) {
+      position = quiz.position;
+    } else {
+      // 현재 세션 퀴즈의 마지막 position 조회
+      const last = await this.env.DB
+        .prepare('SELECT MAX(position) as maxPos FROM TB_QUIZ WHERE session_id = ? AND status = 1')
+        .bind(sessionId)
+        .first();
+      position = (last?.maxPos || 0) + 1;
+    }
 
     const options = quiz.options ? (typeof quiz.options === 'string' ? quiz.options : JSON.stringify(quiz.options)) : null;
 
-    const result = await this.env.DB
+    // content_id FK 제약 대응: 명시적 contentId가 없으면 세션 연결 콘텐츠의 첫 번째 ID 사용
+    let contentId = quiz.contentId || null;
+    if (!contentId) {
+      const linked = await this.env.DB
+        .prepare('SELECT content_id FROM TB_SESSION_CONTENT WHERE session_id = ? AND status = 1 LIMIT 1')
+        .bind(sessionId)
+        .first();
+      contentId = linked?.content_id || null;
+    }
+    // 부모 세션 콘텐츠 조회
+    if (!contentId) {
+      const parent = await this.env.DB
+        .prepare('SELECT parent_id FROM TB_SESSION WHERE id = ?')
+        .bind(sessionId)
+        .first();
+      if (parent?.parent_id > 0) {
+        const linked = await this.env.DB
+          .prepare('SELECT content_id FROM TB_SESSION_CONTENT WHERE session_id = ? AND status = 1 LIMIT 1')
+          .bind(parent.parent_id)
+          .first();
+        contentId = linked?.content_id || null;
+      }
+    }
+
+    const insertResult = await this.env.DB
       .prepare(`
         INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position)
-        VALUES (0, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
-      .bind(sessionId, quiz.quizType, quiz.question, options, quiz.answer, quiz.explanation || null, position)
+      .bind(contentId, sessionId, quiz.quizType, quiz.question, options, quiz.answer, quiz.explanation || null, position)
       .run();
 
     return {
-      id: result.meta.last_row_id,
+      id: insertResult.meta.last_row_id,
       sessionId,
       quizType: quiz.quizType,
       question: quiz.question,
@@ -642,13 +719,14 @@ ${context.substring(0, 4000)}`;
     const question = updates.question || quiz.question;
     const answer = updates.answer || quiz.answer;
     const explanation = updates.explanation !== undefined ? updates.explanation : quiz.explanation;
+    const position = updates.position !== undefined && updates.position !== null ? updates.position : quiz.position;
     const options = updates.options !== undefined
       ? (Array.isArray(updates.options) ? JSON.stringify(updates.options) : updates.options)
       : quiz.options;
 
     await this.env.DB
-      .prepare('UPDATE TB_QUIZ SET quiz_type = ?, question = ?, options = ?, answer = ?, explanation = ? WHERE id = ?')
-      .bind(quizType, question, options, answer, explanation, quizId)
+      .prepare('UPDATE TB_QUIZ SET quiz_type = ?, question = ?, options = ?, answer = ?, explanation = ?, position = ? WHERE id = ?')
+      .bind(quizType, question, options, answer, explanation, position, quizId)
       .run();
 
     return {
@@ -659,7 +737,7 @@ ${context.substring(0, 4000)}`;
       options: options ? JSON.parse(options) : null,
       answer,
       explanation,
-      position: quiz.position
+      position
     };
   }
 
