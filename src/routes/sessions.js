@@ -12,6 +12,7 @@
 import { Hono } from 'hono';
 import { QuizService } from '../services/quizService.js';
 import { LearningService } from '../services/learningService.js';
+import { ContentService } from '../services/contentService.js';
 
 const sessions = new Hono();
 
@@ -122,18 +123,19 @@ sessions.post('/', async (c) => {
     let chatContentIds = null;
     let settings = {};
     let parentId = 0;
+    let body = {};
 
     try {
-      const body = await c.req.json();
+      body = await c.req.json();
       console.log('[Session POST] body:', JSON.stringify(body));
-      userId = body.user_id != null ? parseInt(body.user_id, 10) : null;
-      courseId = body.course_id || null;
-      courseUserId = body.course_user_id || null;
-      lessonId = body.lesson_id || null;
-      contentIds = Array.isArray(body.content_ids) ? body.content_ids : [];
-      chatContentIds = Array.isArray(body.chat_content_ids) ? body.chat_content_ids : null;
+      userId = (body.userId ?? body.user_id) != null ? parseInt(body.userId ?? body.user_id, 10) : null;
+      courseId = body.courseId || body.course_id || null;
+      courseUserId = body.courseUserId || body.course_user_id || null;
+      lessonId = body.lessonId || body.lesson_id || null;
+      contentIds = Array.isArray(body.contentIds) ? body.contentIds : (Array.isArray(body.content_ids) ? body.content_ids : []);
+      chatContentIds = Array.isArray(body.chatContentIds) ? body.chatContentIds : (Array.isArray(body.chat_content_ids) ? body.chat_content_ids : null);
       settings = typeof body.settings === 'string' ? JSON.parse(body.settings) : (body.settings || {});
-      parentId = body.parent_id || 0;
+      parentId = body.parentId || body.parent_id || 0;
       console.log('[Session POST] parsed settings:', JSON.stringify(settings));
     } catch (e) {
       console.error('[Session POST] body parse error:', e.message);
@@ -324,11 +326,12 @@ sessions.post('/', async (c) => {
     }
 
     // 세션 생성 (AI 설정 포함, 미전달 시 DB DEFAULT 사용)
+    const sessionNm = body.sessionNm || body.session_nm || null;
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
-        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         0,
@@ -336,6 +339,7 @@ sessions.post('/', async (c) => {
         courseUserId,
         lessonId,
         userId,
+        sessionNm,
         settings.persona || defaultPersona,
         settings.temperature ?? 0.3,
         settings.topP ?? 0.3,
@@ -455,6 +459,192 @@ sessions.post('/', async (c) => {
       error: {
         code: 'INTERNAL_ERROR',
         message: '세션 생성 중 오류가 발생했습니다.'
+      }
+    }, 500);
+  }
+});
+
+/**
+ * POST /sessions/create-with-contents
+ * 콘텐츠 등록 + 세션 생성 일괄 처리
+ *
+ * Body:
+ * {
+ *   contents: [
+ *     { type: "link", url: "https://...", name: "자막 VTT" },
+ *     { type: "link", url: "https://...", name: "교안 PDF" },
+ *     { type: "text", name: "제목", content: "본문 텍스트" }
+ *   ],
+ *   settings: { persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, quizDifficulty },
+ *   courseId, courseUserId, lessonId, userId, sessionNm
+ * }
+ */
+sessions.post('/create-with-contents', async (c) => {
+  try {
+    const body = await c.req.json();
+    console.log('[CreateWithContents] body:', JSON.stringify(body));
+
+    const contents = body.contents || [];
+    const userId = (body.userId ?? body.user_id) != null ? parseInt(body.userId ?? body.user_id, 10) : null;
+    const courseId = body.courseId || body.course_id || null;
+    const courseUserId = body.courseUserId || body.course_user_id || null;
+    const lessonId = body.lessonId || body.lesson_id || null;
+    const sessionNm = body.sessionNm || body.session_nm || null;
+    const chatContentIds = Array.isArray(body.chatContentIds) ? body.chatContentIds : (Array.isArray(body.chat_content_ids) ? body.chat_content_ids : null);
+    const settings = typeof body.settings === 'string' ? JSON.parse(body.settings) : (body.settings || {});
+
+    if (!contents || contents.length === 0) {
+      return c.json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: '최소 하나 이상의 콘텐츠가 필요합니다.' }
+      }, 400);
+    }
+
+    // 1단계: 콘텐츠 등록 (병렬)
+    const contentService = new ContentService(c.env, c.executionCtx);
+    const contentResults = await Promise.all(
+      contents.map(async (item) => {
+        try {
+          if (item.type === 'link' && item.url) {
+            return await contentService.uploadLink(item.title || item.name || item.url, item.url, lessonId);
+          } else if (item.type === 'text' && item.content) {
+            return await contentService.uploadText(item.title || item.name || '텍스트', item.content, lessonId);
+          } else {
+            return { error: `지원하지 않는 콘텐츠 타입: ${item.type}` };
+          }
+        } catch (err) {
+          return { error: err.message, title: item.title || item.name || item.url };
+        }
+      })
+    );
+
+    // 성공한 콘텐츠 ID 수집
+    const contentIds = contentResults.filter(r => r.id).map(r => r.id);
+    const errors = contentResults.filter(r => r.error);
+
+    if (contentIds.length === 0) {
+      return c.json({
+        success: false,
+        error: {
+          code: 'CONTENT_ERROR',
+          message: '모든 콘텐츠 등록에 실패했습니다.',
+          detail: errors
+        }
+      }, 400);
+    }
+
+    // 2단계: 세션 생성
+    const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
+    const insertResult = await c.env.DB
+      .prepare(`
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        0,
+        courseId,
+        courseUserId,
+        lessonId,
+        userId,
+        sessionNm,
+        settings.persona || defaultPersona,
+        settings.temperature ?? 0.3,
+        settings.topP ?? 0.3,
+        settings.maxTokens ?? 1024,
+        settings.summaryCount ?? 3,
+        settings.recommendCount ?? 3,
+        settings.choiceCount ?? 3,
+        settings.oxCount ?? 2,
+        settings.quizDifficulty || 'normal',
+        chatContentIds ? JSON.stringify(chatContentIds) : null
+      )
+      .run();
+
+    const sessionId = insertResult.meta.last_row_id;
+
+    // 콘텐츠 연결 (TB_SESSION_CONTENT)
+    for (const contentId of contentIds) {
+      await c.env.DB
+        .prepare('INSERT INTO TB_SESSION_CONTENT (session_id, content_id) VALUES (?, ?)')
+        .bind(sessionId, contentId)
+        .run();
+    }
+
+    // 3단계: 학습 데이터 + 퀴즈 생성 (병렬)
+    const quizService = new QuizService(c.env);
+    const learningService = new LearningService(c.env);
+    const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
+    const quizOptions = {
+      choiceCount: settings.choiceCount ?? 3,
+      oxCount: settings.oxCount ?? 2,
+      difficulty: settings.quizDifficulty || 'normal'
+    };
+
+    const parallelTasks = [
+      learningService.generateAndStoreLearningData(sessionId, contentIds, settings)
+    ];
+
+    if (totalQuizCount > 0) {
+      const contentTexts = [];
+      for (const contentId of contentIds) {
+        const content = await c.env.DB
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
+          .bind(contentId)
+          .first();
+        if (content?.content && content.content.trim().length >= 100) {
+          contentTexts.push(content.content);
+        }
+      }
+      const mergedContent = contentTexts.join('\n\n---\n\n');
+      if (mergedContent.trim().length >= 100) {
+        parallelTasks.push(
+          quizService.generateQuizzesForContent(contentIds[0], mergedContent, quizOptions, sessionId)
+            .catch(err => console.error('[CreateWithContents] Quiz generation failed:', err.message))
+        );
+      }
+    }
+
+    const [learningData] = await Promise.all(parallelTasks);
+
+    // 세션 조회
+    const session = await c.env.DB
+      .prepare('SELECT * FROM TB_SESSION WHERE id = ?')
+      .bind(sessionId)
+      .first();
+
+    return c.json({
+      success: true,
+      data: {
+        sessionId,
+        contentIds,
+        title: learningData.sessionNm || sessionNm || '새 대화',
+        settings: {
+          persona: session.persona,
+          temperature: session.temperature,
+          topP: session.top_p,
+          maxTokens: session.max_tokens,
+          choiceCount: session.choice_count,
+          oxCount: session.ox_count,
+          quizDifficulty: session.quiz_difficulty || 'normal'
+        },
+        learning: {
+          goal: learningData.learningGoal,
+          summary: learningData.learningSummary,
+          recommendedQuestions: learningData.recommendedQuestions
+        },
+        contentErrors: errors.length > 0 ? errors : undefined
+      },
+      message: `세션 생성 완료. 콘텐츠 ${contentIds.length}개 등록, 학습 데이터/퀴즈 생성 완료.`
+    }, 201);
+
+  } catch (error) {
+    console.error('Create with contents error:', error);
+    return c.json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: '일괄 생성 중 오류가 발생했습니다.',
+        detail: error.message
       }
     }, 500);
   }

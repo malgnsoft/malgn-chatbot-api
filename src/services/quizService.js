@@ -150,13 +150,22 @@ export class QuizService {
    */
   detectEnglishLearning(content) {
     const sample = content.substring(0, 2000);
+
+    // 한국어 학습 콘텐츠 제외 (외국인 대상 한국어 강의)
+    const koreanLearningPatterns = [
+      /한국어|한국 사람|한국인|안녕하세요|감사합니다/,
+      /Korean|한글|받침|모음|자음|존댓말|반말/,
+      /이에요|이예요|입니다|습니다/,
+    ];
+    if (koreanLearningPatterns.some(p => p.test(sample))) return false;
+
     // 영어 학습 관련 키워드 패턴
     const englishLearningPatterns = [
       /\b(vocabulary|grammar|pronunciation|listening|speaking|reading|writing)\b/i,
       /\b(verb|noun|adjective|adverb|preposition|conjunction)\b/i,
       /\b(tense|past tense|present tense|future tense)\b/i,
       /\b(sentence|clause|phrase|paragraph)\b/i,
-      /영어|English|영문법|영단어|영어회화|어휘|문법|발음|듣기|말하기|읽기|쓰기/,
+      /영어|English|영문법|영단어|영어회화/,
       /\b(lesson|unit|chapter)\b.*\d+/i,
     ];
     const hasLearningPattern = englishLearningPatterns.some(p => p.test(sample));
@@ -288,25 +297,25 @@ ${this.getDifficultyInstruction(difficulty)}
 ${isEnglishLearning ? this.getEnglishLearningInstruction() : ''}
 ${isMathScience ? this.getMathScienceInstruction() : ''}`;
 
-    const userPrompt = `다음 내용을 바탕으로 4지선다 퀴즈 ${count}개를 생성해 주세요.
+    const maxRetries = 3;
+    const accumulated = [];
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const remaining = count - accumulated.length;
+      if (remaining <= 0) break;
+
+      try {
+        const content = await this.callWorkersAI(systemPrompt, `다음 내용을 바탕으로 4지선다 퀴즈 ${remaining}개를 생성해 주세요.
 - 각 문제는 완전한 질문 형태로 작성
 - 반드시 4개의 선택지 포함
 - 선택지는 구체적인 내용으로 작성
 
 내용:
-${context.substring(0, 4000)}`;
-
-    const maxRetries = 3;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const content = await this.callWorkersAI(systemPrompt, userPrompt);
+${context.substring(0, 4000)}`);
 
         // JSON 파싱 (```json ... ``` 제거, LaTeX 이스케이프 보정)
         const jsonMatch = content.match(/\[[\s\S]*\]/);
         const rawJson = jsonMatch ? jsonMatch[0] : '[]';
         const jsonStr = this.fixJsonLatex(rawJson);
-        console.log(`[QuizService] Choice raw JSON (first 200):`, rawJson.substring(0, 200));
-        console.log(`[QuizService] Choice fixed JSON (first 200):`, jsonStr.substring(0, 200));
         const quizzes = JSON.parse(jsonStr);
 
         const valid = quizzes
@@ -320,19 +329,19 @@ ${context.substring(0, 4000)}`;
           }));
 
         const filtered = this.filterIrrelevantQuizzes(valid);
-        if (filtered.length > 0) {
-          console.log(`[QuizService] Choice quiz attempt ${attempt}: ${filtered.length}/${count} valid`);
-          return filtered;
-        }
+        accumulated.push(...filtered);
+        console.log(`[QuizService] Choice quiz attempt ${attempt}: +${filtered.length}, total ${accumulated.length}/${count}`);
 
-        console.warn(`[QuizService] Choice quiz attempt ${attempt}: no valid quizzes (all filtered), retrying...`);
+        if (accumulated.length >= count) break;
       } catch (error) {
         console.error(`[QuizService] Choice quiz attempt ${attempt} error:`, error.message);
       }
     }
 
-    console.error('[QuizService] Choice quiz generation failed after', maxRetries, 'attempts');
-    return [];
+    if (accumulated.length === 0) {
+      console.error('[QuizService] Choice quiz generation failed after', maxRetries, 'attempts');
+    }
+    return accumulated.slice(0, count);
   }
 
   /**
@@ -374,18 +383,20 @@ ${this.getDifficultyInstruction(difficulty)}
 ${isEnglishLearning ? this.getEnglishLearningInstruction() : ''}
 ${isMathScience ? this.getMathScienceInstruction() : ''}`;
 
-    const userPrompt = `다음 내용을 바탕으로 OX 퀴즈 ${count}개를 생성해 주세요.
+    const maxRetries = 3;
+    const accumulated = [];
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const remaining = count - accumulated.length;
+      if (remaining <= 0) break;
+
+      try {
+        const content = await this.callWorkersAI(systemPrompt, `다음 내용을 바탕으로 OX 퀴즈 ${remaining}개를 생성해 주세요.
 - O와 X 문제를 골고루 섞어주세요
 - 반드시 "~이다.", "~한다." 등으로 끝나는 서술문으로 작성
 - 물음표(?)로 끝나는 의문문 절대 금지
 
 내용:
-${context.substring(0, 4000)}`;
-
-    const maxRetries = 3;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const content = await this.callWorkersAI(systemPrompt, userPrompt);
+${context.substring(0, 4000)}`);
 
         // JSON 파싱 (```json ... ``` 제거, LaTeX 이스케이프 보정)
         const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -404,19 +415,19 @@ ${context.substring(0, 4000)}`;
           }));
 
         const filtered = this.filterIrrelevantQuizzes(valid);
-        if (filtered.length > 0) {
-          console.log(`[QuizService] OX quiz attempt ${attempt}: ${filtered.length}/${count} valid`);
-          return filtered;
-        }
+        accumulated.push(...filtered);
+        console.log(`[QuizService] OX quiz attempt ${attempt}: +${filtered.length}, total ${accumulated.length}/${count}`);
 
-        console.warn(`[QuizService] OX quiz attempt ${attempt}: no valid quizzes, retrying...`);
+        if (accumulated.length >= count) break;
       } catch (error) {
         console.error(`[QuizService] OX quiz attempt ${attempt} error:`, error.message);
       }
     }
 
-    console.error('[QuizService] OX quiz generation failed after', maxRetries, 'attempts');
-    return [];
+    if (accumulated.length === 0) {
+      console.error('[QuizService] OX quiz generation failed after', maxRetries, 'attempts');
+    }
+    return accumulated.slice(0, count);
   }
 
   /**
