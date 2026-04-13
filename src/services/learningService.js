@@ -7,8 +7,9 @@
 import { EmbeddingService } from './embeddingService.js';
 
 export class LearningService {
-  constructor(env) {
+  constructor(env, siteId = 0) {
     this.env = env;
+    this.siteId = siteId;
     this.embeddingService = new EmbeddingService(env);
     // Gemma 3 12B - Google, 다국어 우수, 80K 컨텍스트
     this.model = '@cf/google/gemma-3-12b-it';
@@ -101,9 +102,9 @@ export class LearningService {
       .prepare(`
         SELECT content_nm, content
         FROM TB_CONTENT
-        WHERE id IN (${placeholders}) AND status = 1
+        WHERE id IN (${placeholders}) AND status = 1 AND site_id = ?
       `)
-      .bind(...contentIds)
+      .bind(...contentIds, this.siteId)
       .all();
 
     const contentTitles = (contentResults || []).map(r => r.content_nm);
@@ -464,14 +465,15 @@ ${truncatedContext}`;
             learning_summary = ?,
             recommended_questions = ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND site_id = ?
       `)
       .bind(
         sessionNm,
         learningGoal,
         learningSummary ? JSON.stringify(learningSummary) : null,
         recommendedQuestions ? JSON.stringify(recommendedQuestions) : null,
-        sessionId
+        sessionId,
+        this.siteId
       )
       .run();
   }

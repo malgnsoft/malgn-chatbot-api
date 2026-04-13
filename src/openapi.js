@@ -2,16 +2,16 @@ export default {
   openapi: '3.0.0',
   info: {
     title: 'Malgn Chatbot API',
-    version: '2.0.0',
-    description: 'RAG 기반 AI 튜터 챗봇 API - Cloudflare Workers + Hono\n\n학습 자료를 등록하면 벡터 검색(Vectorize)을 통해 문서 기반 AI 응답을 생성합니다.\n부모-자식 세션 구조로 교수자/학습자 분리 운영을 지원합니다.'
+    version: '2.1.0',
+    description: 'RAG 기반 AI 튜터 챗봇 API - Cloudflare Workers + Hono\n\n학습 자료를 등록하면 벡터 검색(Vectorize)을 통해 문서 기반 AI 응답을 생성합니다.\n부모-자식 세션 구조로 교수자/학습자 분리 운영을 지원합니다.\n\n## 멀티사이트\n모든 인증 필요 API에 `X-Site-Id` 헤더를 전달하여 사이트별 데이터를 격리합니다.\n미전달 시 기본값 `0`이 적용됩니다.'
   },
   servers: [
     {
-      url: 'https://malgn-chatbot-api.dotype.workers.dev',
-      description: 'Production (default/user1)'
+      url: 'https://malgn-chatbot-api-user1.malgnsoft.workers.dev',
+      description: 'Production (user1)'
     },
     {
-      url: 'https://malgn-chatbot-api-user2.dotype.workers.dev',
+      url: 'https://malgn-chatbot-api-user2.malgnsoft.workers.dev',
       description: 'Production (user2)'
     },
     {
@@ -64,9 +64,10 @@ export default {
     '/chat': {
       post: {
         summary: '채팅 메시지 전송 (동기)',
-        description: '사용자 메시지를 받아 RAG 기반 AI 응답을 생성합니다.\n\n1. 세션의 콘텐츠 ID 조회 (parent_id 처리)\n2. 메시지 임베딩 (768차원)\n3. Vectorize 유사 문서 검색\n4. 학습 데이터 + 퀴즈 컨텍스트 + 채팅 히스토리 조회\n5. 시스템 프롬프트 구축 후 LLM 호출\n6. 응답 저장 및 반환',
+        description: '사용자 메시지를 받아 RAG 기반 AI 응답을 생성합니다.\n\n1. 세션의 콘텐츠 ID 조회 (parentId 처리)\n2. 메시지 임베딩 (768차원)\n3. Vectorize 유사 문서 검색\n4. 학습 데이터 + 퀴즈 컨텍스트 + 채팅 히스토리 조회\n5. 시스템 프롬프트 구축 후 LLM 호출\n6. 응답 저장 및 반환',
         tags: ['Chat'],
         security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
         requestBody: {
           required: true,
           content: {
@@ -113,6 +114,7 @@ export default {
         description: 'SSE(Server-Sent Events) 방식으로 AI 응답을 실시간 스트리밍합니다.\n\n이벤트 타입:\n- `token`: 부분 응답 토큰 `{ response: "..." }`\n- `done`: 완료 `{ sources: [...], sessionId: 1 }`\n- `error`: 오류 `{ message: "..." }`',
         tags: ['Chat'],
         security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
         requestBody: {
           required: true,
           content: {
@@ -162,10 +164,11 @@ export default {
         tags: ['Contents'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호' },
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 }, description: '페이지당 개수' },
-          { name: 'lesson_id', in: 'query', schema: { type: 'integer' }, description: 'LMS 차시 ID 필터 (선택)' },
-          { name: 'file_type', in: 'query', schema: { type: 'string', enum: ['pdf', 'txt', 'md', 'srt', 'vtt', 'text', 'link'] }, description: '파일 유형 필터 (선택)' }
+          { name: 'lessonId', in: 'query', schema: { type: 'integer' }, description: 'LMS 차시 ID 필터 (선택)' },
+          { name: 'fileType', in: 'query', schema: { type: 'string', enum: ['pdf', 'txt', 'md', 'srt', 'vtt', 'text', 'link'] }, description: '파일 유형 필터 (선택)' }
         ],
         responses: {
           '200': {
@@ -197,6 +200,7 @@ export default {
         description: '텍스트, 링크, 파일(PDF/TXT/MD/SRT/VTT) 형식으로 콘텐츠를 등록합니다.\n\n처리 흐름:\n1. 텍스트 추출 → DB 저장\n2. 500자 단위 청크 분할 (100자 오버랩)\n3. 각 청크 임베딩 → Vectorize 저장\n\n※ 퀴즈는 세션 생성 시 설정에 맞게 자동 생성됩니다.',
         tags: ['Contents'],
         security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
         requestBody: {
           required: true,
           content: {
@@ -210,7 +214,7 @@ export default {
                       type: { type: 'string', enum: ['text'], description: '텍스트 타입' },
                       title: { type: 'string', description: '콘텐츠 제목' },
                       content: { type: 'string', description: '텍스트 내용 (최소 50자)' },
-                      lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
+                      lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
                     }
                   },
                   {
@@ -220,7 +224,7 @@ export default {
                       type: { type: 'string', enum: ['link'], description: '링크 타입' },
                       title: { type: 'string', description: '콘텐츠 제목' },
                       url: { type: 'string', format: 'uri', description: 'URL (HTTP/HTTPS)' },
-                      lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
+                      lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
                     }
                   }
                 ]
@@ -233,7 +237,7 @@ export default {
                 properties: {
                   file: { type: 'string', format: 'binary', description: '파일 (PDF≤10MB, TXT/MD/SRT/VTT≤5MB)' },
                   title: { type: 'string', description: '콘텐츠 제목 (선택, 미입력시 파일명 사용)' },
-                  lesson_id: { type: 'integer', description: 'LMS 차시 ID (선택)' }
+                  lessonId: { type: 'integer', description: 'LMS 차시 ID (선택)' }
                 }
               }
             }
@@ -269,6 +273,7 @@ export default {
         description: '퀴즈가 없는 콘텐츠에 대해 퀴즈를 일괄 생성합니다.',
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
         responses: {
           '200': {
             description: '퀴즈 재생성 결과',
@@ -303,6 +308,7 @@ export default {
         description: 'Vectorize 인덱스 재생성 후 모든 콘텐츠를 재임베딩합니다.',
         tags: ['Contents'],
         security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
         responses: {
           '200': {
             description: '재임베딩 결과',
@@ -329,6 +335,7 @@ export default {
         tags: ['Contents'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '콘텐츠 ID' }
         ],
         responses: {
@@ -358,6 +365,7 @@ export default {
         tags: ['Contents'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '콘텐츠 ID' }
         ],
         requestBody: {
@@ -370,7 +378,7 @@ export default {
                 properties: {
                   title: { type: 'string', description: '제목' },
                   content: { type: 'string', description: '내용 (선택, 변경 시 재임베딩)' },
-                  lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
+                  lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID (선택)' }
                 }
               }
             }
@@ -404,6 +412,7 @@ export default {
         tags: ['Contents'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '콘텐츠 ID' }
         ],
         responses: {
@@ -434,6 +443,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '콘텐츠 ID' }
         ],
         responses: {
@@ -469,6 +479,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '콘텐츠 ID' }
         ],
         requestBody: {
@@ -515,13 +526,116 @@ export default {
         }
       }
     },
+    '/sessions/create-with-contents': {
+      post: {
+        summary: '콘텐츠 등록 + 세션 생성 일괄 처리',
+        description: '콘텐츠(링크/텍스트) 등록 → 임베딩 생성 → 세션 생성 → 학습 메타데이터/퀴즈 자동 생성을 한 번의 API 호출로 처리합니다.\n\n위캔디오 등 외부 LMS에서 자막/교안 파일을 AI 콘텐츠로 등록하고 세션까지 일괄 생성할 때 사용합니다.',
+        tags: ['Sessions'],
+        security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['contents'],
+                properties: {
+                  contents: {
+                    type: 'array',
+                    description: '등록할 콘텐츠 목록',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        type: { type: 'string', enum: ['link', 'text'], description: '콘텐츠 타입' },
+                        title: { type: 'string', description: '콘텐츠 제목' },
+                        url: { type: 'string', description: 'URL (type=link일 때 필수, VTT/SRT/PDF/DOCX/PPTX/HTML 지원)' },
+                        content: { type: 'string', description: '본문 텍스트 (type=text일 때 필수)' }
+                      }
+                    }
+                  },
+                  settings: {
+                    type: 'object',
+                    description: 'AI 설정',
+                    properties: {
+                      persona: { type: 'string' },
+                      temperature: { type: 'number', default: 0.3 },
+                      topP: { type: 'number', default: 0.3 },
+                      maxTokens: { type: 'integer', default: 1024 },
+                      summaryCount: { type: 'integer', default: 3 },
+                      recommendCount: { type: 'integer', default: 3 },
+                      choiceCount: { type: 'integer', default: 3, description: '4지선다 퀴즈 수' },
+                      oxCount: { type: 'integer', default: 2, description: 'OX 퀴즈 수' },
+                      quizDifficulty: { type: 'string', enum: ['easy', 'normal', 'hard'], default: 'normal' }
+                    }
+                  },
+                  sessionNm: { type: 'string', description: '세션 이름 (미지정 시 학습 데이터에서 자동 생성)' },
+                  courseId: { type: 'integer', description: 'LMS 코스 ID' },
+                  courseUserId: { type: 'integer', description: 'LMS 수강생 ID' },
+                  lessonId: { type: 'integer', description: 'LMS 레슨(차시) ID' },
+                  userId: { type: 'integer', description: '사용자 ID' },
+                  chatContentIds: { type: 'array', items: { type: 'integer' }, description: '채팅 시 사용할 콘텐츠 ID 배열 (선택)' }
+                }
+              },
+              example: {
+                contents: [
+                  { type: 'link', url: 'https://cdn.example.com/subtitle_ko.vtt', title: '위캔디오 자막' },
+                  { type: 'link', url: 'https://cdn.example.com/lesson_material.pdf', title: '교안 PDF' }
+                ],
+                settings: { choiceCount: 3, oxCount: 2, quizDifficulty: 'normal' },
+                courseId: 123,
+                lessonId: 456,
+                sessionNm: '한국어 1A 4-1차시'
+              }
+            }
+          }
+        },
+        responses: {
+          '201': {
+            description: '일괄 생성 성공',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        sessionId: { type: 'integer', description: '생성된 세션 ID' },
+                        contentIds: { type: 'array', items: { type: 'integer' }, description: '등록된 콘텐츠 ID 목록' },
+                        title: { type: 'string' },
+                        learning: {
+                          type: 'object',
+                          properties: {
+                            goal: { type: 'string' },
+                            summary: { type: 'array', items: { type: 'string' } },
+                            recommendedQuestions: { type: 'array' }
+                          }
+                        },
+                        contentErrors: { type: 'array', description: '콘텐츠 등록 실패 목록 (일부 실패 시)' }
+                      }
+                    },
+                    message: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          '400': { description: '콘텐츠 없음 또는 전체 등록 실패' },
+          '401': { description: '인증 실패' },
+          '500': { description: '서버 오류' }
+        }
+      }
+    },
     '/sessions': {
       get: {
         summary: '세션 목록 조회',
-        description: '부모 세션(parent_id = 0)만 반환합니다. 자식 세션은 포함되지 않습니다.',
+        description: '부모 세션(parentId = 0)만 반환합니다. 자식 세션은 포함되지 않습니다.',
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호' },
           { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 }, description: '페이지당 개수' }
         ],
@@ -552,29 +666,32 @@ export default {
       },
       post: {
         summary: '세션 생성',
-        description: '학습 콘텐츠를 선택하여 새 채팅 세션을 생성합니다.\n\n**부모 세션** (parent_id = 0 또는 미지정):\n- content_ids 필수 (최소 1개)\n- 학습 목표, 요약, 추천 질문(Q&A 쌍) 자동 생성 (LLM 70B)\n- 학습 데이터 Vectorize 임베딩 저장\n- 퀴즈 자동 생성 (설정에 맞게, 난이도 반영)\n\n**자식 세션** (parent_id > 0):\n- 부모의 콘텐츠/학습 데이터 공유\n- 동일 parent + course_user_id + lesson_id 조합이면 기존 자식 세션 반환\n- 독립 채팅 히스토리 보유',
+        description: '학습 콘텐츠를 선택하여 새 채팅 세션을 생성합니다.\n\n**부모 세션** (parentId = 0 또는 미지정):\n- contentIds 필수 (최소 1개)\n- 학습 목표, 요약, 추천 질문(Q&A 쌍) 자동 생성 (LLM 70B)\n- 학습 데이터 Vectorize 임베딩 저장\n- 퀴즈 자동 생성 (설정에 맞게, 난이도 반영)\n\n**자식 세션** (parentId > 0):\n- 부모의 콘텐츠/학습 데이터 공유\n- 동일 parent + courseUserId + lessonId 조합이면 기존 자식 세션 반환\n- 독립 채팅 히스토리 보유',
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
+        parameters: [{ $ref: '#/components/parameters/SiteId' }],
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['content_ids'],
+                required: ['contentIds'],
                 properties: {
-                  content_ids: {
+                  contentIds: {
                     type: 'array',
                     items: { type: 'integer' },
                     minItems: 1,
                     description: '연결할 콘텐츠 ID 배열 (부모 세션 시 필수, 자식 세션 시 무시)',
                     example: [8, 9]
                   },
-                  parent_id: { type: 'integer', description: '부모 세션 ID (자식 세션 생성 시)', default: 0, example: 0 },
-                  user_id: { type: 'integer', description: '사용자 ID (선택)', nullable: true },
-                  course_id: { type: 'integer', description: '코스 ID (LMS 연동, 선택)', nullable: true },
-                  course_user_id: { type: 'integer', description: '코스 사용자 ID (LMS 연동, 선택)', nullable: true },
-                  lesson_id: { type: 'integer', description: '레슨 ID (LMS 연동, 선택)', nullable: true },
+                  parentId: { type: 'integer', description: '부모 세션 ID (자식 세션 생성 시)', default: 0, example: 0 },
+                  sessionNm: { type: 'string', description: '세션 이름 (미지정 시 학습 데이터에서 자동 생성)', nullable: true },
+                  userId: { type: 'integer', description: '사용자 ID (선택)', nullable: true },
+                  courseId: { type: 'integer', description: '코스 ID (LMS 연동, 선택)', nullable: true },
+                  courseUserId: { type: 'integer', description: '코스 사용자 ID (LMS 연동, 선택)', nullable: true },
+                  lessonId: { type: 'integer', description: '레슨 ID (LMS 연동, 선택)', nullable: true },
+                  chatContentIds: { type: 'array', items: { type: 'integer' }, description: '채팅 시 사용할 콘텐츠 ID 배열 (선택)', nullable: true },
                   settings: {
                     type: 'object',
                     description: 'AI 설정 (선택)',
@@ -597,7 +714,7 @@ export default {
         },
         responses: {
           '200': {
-            description: '기존 자식 세션 반환 (동일 parent + course_user_id + lesson_id 존재 시)',
+            description: '기존 자식 세션 반환 (동일 parent + courseUserId + lessonId 존재 시)',
             content: {
               'application/json': {
                 schema: {
@@ -639,6 +756,7 @@ export default {
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         responses: {
@@ -668,6 +786,7 @@ export default {
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         requestBody: {
@@ -780,6 +899,7 @@ export default {
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         responses: {
@@ -811,6 +931,7 @@ export default {
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         requestBody: {
@@ -846,6 +967,7 @@ export default {
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         requestBody: {
@@ -889,6 +1011,7 @@ export default {
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         requestBody: {
@@ -925,6 +1048,36 @@ export default {
         }
       }
     },
+    '/sessions/{id}/messages': {
+      delete: {
+        summary: '세션 메시지 전체 삭제',
+        description: '세션의 모든 채팅 메시지를 soft delete합니다. 세션 자체는 유지됩니다.',
+        tags: ['Sessions'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { $ref: '#/components/parameters/SiteId' },
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
+        ],
+        responses: {
+          '200': {
+            description: '삭제 성공',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    message: { type: 'string', example: '메시지가 초기화되었습니다.' }
+                  }
+                }
+              }
+            }
+          },
+          '401': { description: '인증 실패' },
+          '404': { description: '세션 없음' }
+        }
+      }
+    },
     '/sessions/{id}/quiz': {
       post: {
         summary: '세션 퀴즈 추가',
@@ -932,6 +1085,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         requestBody: {
@@ -972,6 +1126,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' },
           { name: 'quizId', in: 'path', required: true, schema: { type: 'integer' }, description: '퀴즈 ID' }
         ],
@@ -992,6 +1147,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' },
           { name: 'quizId', in: 'path', required: true, schema: { type: 'integer' }, description: '퀴즈 ID' }
         ],
@@ -1030,6 +1186,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' },
           { name: 'quizId', in: 'path', required: true, schema: { type: 'integer' }, description: '퀴즈 ID' }
         ],
@@ -1052,6 +1209,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         responses: {
@@ -1088,6 +1246,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         requestBody: {
@@ -1141,6 +1300,7 @@ export default {
         tags: ['Quizzes'],
         security: [{ bearerAuth: [] }],
         parameters: [
+          { $ref: '#/components/parameters/SiteId' },
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: '세션 ID' }
         ],
         responses: {
@@ -1180,6 +1340,15 @@ export default {
         description: 'API Key를 Bearer 토큰으로 입력하세요.'
       }
     },
+    parameters: {
+      SiteId: {
+        name: 'X-Site-Id',
+        in: 'header',
+        required: false,
+        schema: { type: 'integer', default: 0 },
+        description: '멀티사이트 ID. 사이트별 데이터 격리에 사용됩니다. 미전달 시 기본값 0.'
+      }
+    },
     schemas: {
       ChatResponse: {
         type: 'object',
@@ -1210,29 +1379,31 @@ export default {
         type: 'object',
         properties: {
           id: { type: 'integer' },
-          content_nm: { type: 'string', description: '콘텐츠 이름' },
+          contentNm: { type: 'string', description: '콘텐츠 이름' },
           filename: { type: 'string', description: '파일명 또는 URL' },
-          file_type: { type: 'string', enum: ['pdf', 'txt', 'md', 'srt', 'vtt', 'text', 'link'], description: '파일 유형' },
-          file_size: { type: 'integer', description: '파일 크기 (bytes)' },
-          lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
+          fileType: { type: 'string', enum: ['pdf', 'txt', 'md', 'srt', 'vtt', 'text', 'link'], description: '파일 유형' },
+          fileSize: { type: 'integer', description: '파일 크기 (bytes)' },
+          lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
+          siteId: { type: 'integer', description: '사이트 ID (멀티사이트)' },
           status: { type: 'integer', description: '상태 (1=활성, 0=비활성, -1=삭제)' },
-          created_at: { type: 'string', format: 'date-time' },
-          updated_at: { type: 'string', format: 'date-time' }
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' }
         }
       },
       ContentDetail: {
         type: 'object',
         properties: {
           id: { type: 'integer' },
-          content_nm: { type: 'string' },
+          contentNm: { type: 'string' },
           filename: { type: 'string' },
-          file_type: { type: 'string' },
-          file_size: { type: 'integer' },
+          fileType: { type: 'string' },
+          fileSize: { type: 'integer' },
           content: { type: 'string', description: '추출된 텍스트 전문' },
-          lesson_id: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
+          lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
+          siteId: { type: 'integer', description: '사이트 ID (멀티사이트)' },
           status: { type: 'integer' },
-          created_at: { type: 'string', format: 'date-time' },
-          updated_at: { type: 'string', format: 'date-time' }
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' }
         }
       },
       SessionSummary: {
@@ -1242,8 +1413,8 @@ export default {
           title: { type: 'string', description: '세션 제목 (AI 생성 또는 첫 메시지 기반)' },
           lastMessage: { type: 'string', nullable: true, description: '마지막 메시지 미리보기 (50자)' },
           messageCount: { type: 'integer' },
-          created_at: { type: 'string', format: 'date-time' },
-          updated_at: { type: 'string', format: 'date-time' }
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' }
         }
       },
       SessionDetail: {
@@ -1300,14 +1471,14 @@ export default {
               type: 'object',
               properties: {
                 id: { type: 'integer' },
-                content_nm: { type: 'string' }
+                contentNm: { type: 'string' }
               }
             }
           },
           messages: { type: 'array', items: { $ref: '#/components/schemas/Message' }, description: '채팅 메시지 목록' },
           messageCount: { type: 'integer' },
-          created_at: { type: 'string', format: 'date-time' },
-          updated_at: { type: 'string', format: 'date-time' }
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' }
         }
       },
       Message: {
@@ -1316,7 +1487,7 @@ export default {
           id: { type: 'integer' },
           role: { type: 'string', enum: ['user', 'assistant'], description: '메시지 역할' },
           content: { type: 'string', description: '메시지 내용' },
-          created_at: { type: 'string', format: 'date-time' }
+          createdAt: { type: 'string', format: 'date-time' }
         }
       },
       Quiz: {

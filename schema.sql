@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS TB_CONTENT (
   file_size INTEGER NOT NULL,
   content TEXT,
   lesson_id INTEGER,
+  site_id INTEGER NOT NULL DEFAULT 0,
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS TB_CONTENT (
 CREATE INDEX IF NOT EXISTS idx_content_created_at ON TB_CONTENT(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_content_status ON TB_CONTENT(status);
 CREATE INDEX IF NOT EXISTS idx_content_lesson_id ON TB_CONTENT(lesson_id);
+CREATE INDEX IF NOT EXISTS idx_content_site_id ON TB_CONTENT(site_id);
 
 -- TB_SESSION: 채팅 세션
 CREATE TABLE IF NOT EXISTS TB_SESSION (
@@ -43,6 +45,7 @@ CREATE TABLE IF NOT EXISTS TB_SESSION (
   learning_goal TEXT,
   learning_summary TEXT,
   recommended_questions TEXT,
+  site_id INTEGER NOT NULL DEFAULT 0,
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -53,6 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_session_status ON TB_SESSION(status);
 CREATE INDEX IF NOT EXISTS idx_session_user ON TB_SESSION(user_id);
 CREATE INDEX IF NOT EXISTS idx_session_parent_id ON TB_SESSION(parent_id);
 CREATE INDEX IF NOT EXISTS idx_session_parent_course_user ON TB_SESSION(parent_id, course_user_id);
+CREATE INDEX IF NOT EXISTS idx_session_site_id ON TB_SESSION(site_id);
 
 -- TB_MESSAGE: 채팅 메시지
 CREATE TABLE IF NOT EXISTS TB_MESSAGE (
@@ -61,6 +65,7 @@ CREATE TABLE IF NOT EXISTS TB_MESSAGE (
   user_id INTEGER,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL,
+  site_id INTEGER NOT NULL DEFAULT 0,
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (session_id) REFERENCES TB_SESSION(id) ON DELETE CASCADE
@@ -70,12 +75,14 @@ CREATE TABLE IF NOT EXISTS TB_MESSAGE (
 CREATE INDEX IF NOT EXISTS idx_message_session ON TB_MESSAGE(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_message_status ON TB_MESSAGE(status);
 CREATE INDEX IF NOT EXISTS idx_message_user ON TB_MESSAGE(user_id);
+CREATE INDEX IF NOT EXISTS idx_message_site_id ON TB_MESSAGE(site_id);
 
 -- TB_SESSION_CONTENT: 세션-콘텐츠 연결 (채팅방별 자료 범위 설정)
 CREATE TABLE IF NOT EXISTS TB_SESSION_CONTENT (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id INTEGER NOT NULL,
   content_id INTEGER NOT NULL,
+  site_id INTEGER NOT NULL DEFAULT 0,
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (session_id) REFERENCES TB_SESSION(id) ON DELETE CASCADE,
@@ -87,6 +94,7 @@ CREATE TABLE IF NOT EXISTS TB_SESSION_CONTENT (
 CREATE INDEX IF NOT EXISTS idx_session_content_session ON TB_SESSION_CONTENT(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_content_content ON TB_SESSION_CONTENT(content_id);
 CREATE INDEX IF NOT EXISTS idx_session_content_status ON TB_SESSION_CONTENT(status);
+CREATE INDEX IF NOT EXISTS idx_session_content_site_id ON TB_SESSION_CONTENT(site_id);
 
 -- TB_QUIZ: 퀴즈 (콘텐츠 기반 또는 세션 직접 추가)
 -- quiz_type: 'choice' (4지선다), 'ox' (OX퀴즈)
@@ -102,6 +110,7 @@ CREATE TABLE IF NOT EXISTS TB_QUIZ (
   answer TEXT NOT NULL,
   explanation TEXT,
   position INTEGER NOT NULL,
+  site_id INTEGER NOT NULL DEFAULT 0,
   status INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (content_id) REFERENCES TB_CONTENT(id) ON DELETE CASCADE
@@ -111,3 +120,4 @@ CREATE TABLE IF NOT EXISTS TB_QUIZ (
 CREATE INDEX IF NOT EXISTS idx_quiz_content ON TB_QUIZ(content_id, position);
 CREATE INDEX IF NOT EXISTS idx_quiz_session ON TB_QUIZ(session_id, position);
 CREATE INDEX IF NOT EXISTS idx_quiz_status ON TB_QUIZ(status);
+CREATE INDEX IF NOT EXISTS idx_quiz_site_id ON TB_QUIZ(site_id);

@@ -8,8 +8,9 @@
  * 세션 생성 시에는 연결된 콘텐츠의 퀴즈를 조회하여 사용합니다.
  */
 export class QuizService {
-  constructor(env) {
+  constructor(env, siteId = 0) {
     this.env = env;
+    this.siteId = siteId;
     // Gemma 3 12B - Google, 다국어 우수
     this.model = '@cf/google/gemma-3-12b-it';
   }
@@ -86,9 +87,9 @@ export class QuizService {
       .prepare(`
         SELECT content
         FROM TB_CONTENT
-        WHERE id IN (${placeholders}) AND status = 1
+        WHERE id IN (${placeholders}) AND status = 1 AND site_id = ?
       `)
-      .bind(...contentIds)
+      .bind(...contentIds, this.siteId)
       .all();
 
     return (results || []).map(r => r.content).filter(c => c).join('\n\n');
@@ -319,7 +320,16 @@ ${context.substring(0, 4000)}`);
         const quizzes = JSON.parse(jsonStr);
 
         const valid = quizzes
-          .filter(q => Array.isArray(q.options) && q.options.length === 4)
+          .filter(q => {
+            if (!Array.isArray(q.options) || q.options.length !== 4) return false;
+            // 중복 선택지 체크
+            const unique = new Set(q.options.map(o => String(o).trim()));
+            if (unique.size < 4) {
+              console.log('[QuizService] Filtered duplicate options:', q.question?.substring(0, 50));
+              return false;
+            }
+            return true;
+          })
           .map(q => ({
             quiz_type: 'choice',
             question: q.question,
@@ -523,8 +533,8 @@ ${context.substring(0, 4000)}`);
       const quiz = quizzes[i];
       await this.env.DB
         .prepare(`
-          INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position, site_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           contentId,
@@ -534,7 +544,8 @@ ${context.substring(0, 4000)}`);
           quiz.options,
           quiz.answer,
           quiz.explanation,
-          i + 1
+          i + 1,
+          this.siteId
         )
         .run();
     }
@@ -548,10 +559,10 @@ ${context.substring(0, 4000)}`);
       .prepare(`
         SELECT id, quiz_type, question, options, answer, explanation, position, created_at
         FROM TB_QUIZ
-        WHERE content_id = ? AND status = 1
+        WHERE content_id = ? AND status = 1 AND site_id = ?
         ORDER BY position ASC
       `)
-      .bind(contentId)
+      .bind(contentId, this.siteId)
       .all();
 
     return (results || []).map(q => ({
@@ -580,7 +591,7 @@ ${context.substring(0, 4000)}`);
     let query = `
       SELECT id, content_id, quiz_type, question, options, answer, explanation, position, created_at
       FROM TB_QUIZ
-      WHERE content_id IN (${placeholders}) AND status = 1
+      WHERE content_id IN (${placeholders}) AND status = 1 AND site_id = ?
       ORDER BY content_id, position ASC
     `;
 
@@ -590,7 +601,7 @@ ${context.substring(0, 4000)}`);
 
     const { results } = await this.env.DB
       .prepare(query)
-      .bind(...contentIds)
+      .bind(...contentIds, this.siteId)
       .all();
 
     return (results || []).map(q => ({
@@ -611,8 +622,8 @@ ${context.substring(0, 4000)}`);
    */
   async deleteQuizzesByContent(contentId) {
     await this.env.DB
-      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE content_id = ?')
-      .bind(contentId)
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE content_id = ? AND site_id = ?')
+      .bind(contentId, this.siteId)
       .run();
   }
 
@@ -631,8 +642,8 @@ ${context.substring(0, 4000)}`);
     } else {
       // 현재 세션 퀴즈의 마지막 position 조회
       const last = await this.env.DB
-        .prepare('SELECT MAX(position) as maxPos FROM TB_QUIZ WHERE session_id = ? AND status = 1')
-        .bind(sessionId)
+        .prepare('SELECT MAX(position) as maxPos FROM TB_QUIZ WHERE session_id = ? AND status = 1 AND site_id = ?')
+        .bind(sessionId, this.siteId)
         .first();
       position = (last?.maxPos || 0) + 1;
     }
@@ -643,21 +654,21 @@ ${context.substring(0, 4000)}`);
     let contentId = quiz.contentId || null;
     if (!contentId) {
       const linked = await this.env.DB
-        .prepare('SELECT content_id FROM TB_SESSION_CONTENT WHERE session_id = ? AND status = 1 LIMIT 1')
-        .bind(sessionId)
+        .prepare('SELECT content_id FROM TB_SESSION_CONTENT WHERE session_id = ? AND status = 1 AND site_id = ? LIMIT 1')
+        .bind(sessionId, this.siteId)
         .first();
       contentId = linked?.content_id || null;
     }
     // 부모 세션 콘텐츠 조회
     if (!contentId) {
       const parent = await this.env.DB
-        .prepare('SELECT parent_id FROM TB_SESSION WHERE id = ?')
-        .bind(sessionId)
+        .prepare('SELECT parent_id FROM TB_SESSION WHERE id = ? AND site_id = ?')
+        .bind(sessionId, this.siteId)
         .first();
       if (parent?.parent_id > 0) {
         const linked = await this.env.DB
-          .prepare('SELECT content_id FROM TB_SESSION_CONTENT WHERE session_id = ? AND status = 1 LIMIT 1')
-          .bind(parent.parent_id)
+          .prepare('SELECT content_id FROM TB_SESSION_CONTENT WHERE session_id = ? AND status = 1 AND site_id = ? LIMIT 1')
+          .bind(parent.parent_id, this.siteId)
           .first();
         contentId = linked?.content_id || null;
       }
@@ -665,10 +676,10 @@ ${context.substring(0, 4000)}`);
 
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_QUIZ (content_id, session_id, quiz_type, question, options, answer, explanation, position, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentId, sessionId, quiz.quizType, quiz.question, options, quiz.answer, quiz.explanation || null, position)
+      .bind(contentId, sessionId, quiz.quizType, quiz.question, options, quiz.answer, quiz.explanation || null, position, this.siteId)
       .run();
 
     return {
@@ -692,10 +703,10 @@ ${context.substring(0, 4000)}`);
       .prepare(`
         SELECT id, session_id, quiz_type, question, options, answer, explanation, position, created_at
         FROM TB_QUIZ
-        WHERE session_id = ? AND status = 1
+        WHERE session_id = ? AND status = 1 AND site_id = ?
         ORDER BY position ASC
       `)
-      .bind(sessionId)
+      .bind(sessionId, this.siteId)
       .all();
 
     return (results || []).map(q => ({
@@ -720,8 +731,8 @@ ${context.substring(0, 4000)}`);
    */
   async updateSessionQuiz(quizId, sessionId, updates) {
     const quiz = await this.env.DB
-      .prepare('SELECT * FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1')
-      .bind(quizId, sessionId)
+      .prepare('SELECT * FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1 AND site_id = ?')
+      .bind(quizId, sessionId, this.siteId)
       .first();
 
     if (!quiz) return null;
@@ -759,8 +770,8 @@ ${context.substring(0, 4000)}`);
    */
   async deleteSessionQuiz(quizId, sessionId) {
     const quiz = await this.env.DB
-      .prepare('SELECT id FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1')
-      .bind(quizId, sessionId)
+      .prepare('SELECT id FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1 AND site_id = ?')
+      .bind(quizId, sessionId, this.siteId)
       .first();
 
     if (!quiz) return false;
@@ -778,8 +789,8 @@ ${context.substring(0, 4000)}`);
    */
   async deleteQuizzesBySession(sessionId) {
     await this.env.DB
-      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND content_id = 0')
-      .bind(sessionId)
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND content_id = 0 AND site_id = ?')
+      .bind(sessionId, this.siteId)
       .run();
   }
 }

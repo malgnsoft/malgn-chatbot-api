@@ -26,13 +26,15 @@ const sessions = new Hono();
  */
 sessions.get('/', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const page = Math.max(1, parseInt(c.req.query('page') || '1'));
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '50')));
     const offset = (page - 1) * limit;
 
     // 전체 개수 조회 (부모 세션만, status = 1)
     const countResult = await c.env.DB
-      .prepare('SELECT COUNT(*) as total FROM TB_SESSION WHERE status = 1 AND parent_id = 0')
+      .prepare('SELECT COUNT(*) as total FROM TB_SESSION WHERE status = 1 AND parent_id = 0 AND site_id = ?')
+      .bind(siteId)
       .first();
     const total = countResult?.total || 0;
 
@@ -48,11 +50,11 @@ sessions.get('/', async (c) => {
           (SELECT content FROM TB_MESSAGE WHERE session_id = s.id AND status = 1 ORDER BY created_at DESC LIMIT 1) as lastMessage,
           (SELECT COUNT(*) FROM TB_MESSAGE WHERE session_id = s.id AND status = 1) as messageCount
         FROM TB_SESSION s
-        WHERE s.status = 1 AND s.parent_id = 0
+        WHERE s.status = 1 AND s.parent_id = 0 AND s.site_id = ?
         ORDER BY s.updated_at DESC
         LIMIT ? OFFSET ?
       `)
-      .bind(limit, offset)
+      .bind(siteId, limit, offset)
       .all();
 
     // 제목: DB 저장된 제목 우선, 없으면 첫 메시지 기반 생성
@@ -141,12 +143,14 @@ sessions.post('/', async (c) => {
       console.error('[Session POST] body parse error:', e.message);
     }
 
+    const siteId = c.get('siteId');
+
     // ── 자식 세션 생성 (parent_id > 0) ──
     if (parentId > 0) {
       // 부모 세션 존재 확인
       const parentSession = await c.env.DB
-        .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND parent_id = 0')
-        .bind(parentId)
+        .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND parent_id = 0 AND site_id = ?')
+        .bind(parentId, siteId)
         .first();
 
       if (!parentSession) {
@@ -158,8 +162,8 @@ sessions.post('/', async (c) => {
 
       // 동일 부모 + 수강생 + 레슨 자식 존재 확인
       if (courseUserId) {
-        let existingChildQuery = 'SELECT id FROM TB_SESSION WHERE parent_id = ? AND course_user_id = ? AND status = 1';
-        const bindParams = [parentId, courseUserId];
+        let existingChildQuery = 'SELECT id FROM TB_SESSION WHERE parent_id = ? AND course_user_id = ? AND status = 1 AND site_id = ?';
+        const bindParams = [parentId, courseUserId, siteId];
         if (lessonId) {
           existingChildQuery += ' AND lesson_id = ?';
           bindParams.push(lessonId);
@@ -174,13 +178,13 @@ sessions.post('/', async (c) => {
         if (existingChild) {
           // 기존 자식 세션 반환
           const childSession = await c.env.DB
-            .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1')
-            .bind(existingChild.id)
+            .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+            .bind(existingChild.id, siteId)
             .first();
 
           const { results: messages } = await c.env.DB
-            .prepare('SELECT id, role, content, created_at FROM TB_MESSAGE WHERE session_id = ? AND status = 1 ORDER BY created_at ASC')
-            .bind(existingChild.id)
+            .prepare('SELECT id, role, content, created_at FROM TB_MESSAGE WHERE session_id = ? AND status = 1 AND site_id = ? ORDER BY created_at ASC')
+            .bind(existingChild.id, siteId)
             .all();
 
           const { results: linkedContents } = await c.env.DB
@@ -188,9 +192,9 @@ sessions.post('/', async (c) => {
               SELECT c.id, c.content_nm
               FROM TB_SESSION_CONTENT sc
               JOIN TB_CONTENT c ON sc.content_id = c.id AND c.status = 1
-              WHERE sc.session_id = ? AND sc.status = 1
+              WHERE sc.session_id = ? AND sc.status = 1 AND sc.site_id = ?
             `)
-            .bind(parentId)
+            .bind(parentId, siteId)
             .all();
 
           let learningSummary = null;
@@ -239,8 +243,8 @@ sessions.post('/', async (c) => {
       const insertResult = await c.env.DB
         .prepare(`
           INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id,
-            persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, chat_content_ids)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, chat_content_ids, site_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           parentId, courseId, courseUserId, lessonId, userId,
@@ -252,7 +256,8 @@ sessions.post('/', async (c) => {
           parentSession.recommend_count,
           parentSession.choice_count,
           parentSession.ox_count,
-          parentSession.chat_content_ids || null
+          parentSession.chat_content_ids || null,
+          siteId
         )
         .run();
 
@@ -264,9 +269,9 @@ sessions.post('/', async (c) => {
           SELECT c.id, c.content_nm
           FROM TB_SESSION_CONTENT sc
           JOIN TB_CONTENT c ON sc.content_id = c.id AND c.status = 1
-          WHERE sc.session_id = ? AND sc.status = 1
+          WHERE sc.session_id = ? AND sc.status = 1 AND sc.site_id = ?
         `)
-        .bind(parentId)
+        .bind(parentId, siteId)
         .all();
 
       // 부모 학습 데이터 파싱
@@ -330,8 +335,8 @@ sessions.post('/', async (c) => {
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
-        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         0,
@@ -349,7 +354,8 @@ sessions.post('/', async (c) => {
         settings.choiceCount ?? 3,
         settings.oxCount ?? 2,
         settings.quizDifficulty || 'normal',
-        chatContentIds ? JSON.stringify(chatContentIds) : null
+        chatContentIds ? JSON.stringify(chatContentIds) : null,
+        siteId
       )
       .run();
 
@@ -359,14 +365,14 @@ sessions.post('/', async (c) => {
     if (contentIds.length > 0) {
       for (const contentId of contentIds) {
         await c.env.DB
-          .prepare('INSERT INTO TB_SESSION_CONTENT (session_id, content_id) VALUES (?, ?)')
-          .bind(sessionId, contentId)
+          .prepare('INSERT INTO TB_SESSION_CONTENT (session_id, content_id, site_id) VALUES (?, ?, ?)')
+          .bind(sessionId, contentId, siteId)
           .run();
       }
     }
 
     // 퀴즈 생성 준비 (퀴즈 수가 0이면 스킵) — 세션 전체 기준으로 설정 수만큼만 생성
-    const quizService = new QuizService(c.env);
+    const quizService = new QuizService(c.env, siteId);
     const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
     const quizOptions = {
       choiceCount: settings.choiceCount ?? 3,
@@ -380,8 +386,8 @@ sessions.post('/', async (c) => {
       const contentTexts = [];
       for (const contentId of contentIds) {
         const content = await c.env.DB
-          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
-          .bind(contentId)
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+          .bind(contentId, siteId)
           .first();
         if (content?.content && content.content.trim().length >= 100) {
           contentTexts.push(content.content);
@@ -395,15 +401,15 @@ sessions.post('/', async (c) => {
     }
 
     // 학습 데이터 + 퀴즈 생성 병렬 실행 (퀴즈 완료까지 대기)
-    const learningService = new LearningService(c.env);
+    const learningService = new LearningService(c.env, siteId);
     const parallelTasks = [learningService.generateAndStoreLearningData(sessionId, contentIds, settings)];
     if (quizPromise) parallelTasks.push(quizPromise);
     const [learningData] = await Promise.all(parallelTasks);
 
     // 생성된 세션 조회 (학습 데이터 포함)
     const session = await c.env.DB
-      .prepare('SELECT * FROM TB_SESSION WHERE id = ?')
-      .bind(sessionId)
+      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND site_id = ?')
+      .bind(sessionId, siteId)
       .first();
 
     // 연결된 콘텐츠 조회
@@ -412,9 +418,9 @@ sessions.post('/', async (c) => {
         SELECT c.id, c.content_nm
         FROM TB_SESSION_CONTENT sc
         JOIN TB_CONTENT c ON sc.content_id = c.id AND c.status = 1
-        WHERE sc.session_id = ? AND sc.status = 1
+        WHERE sc.session_id = ? AND sc.status = 1 AND sc.site_id = ?
       `)
-      .bind(sessionId)
+      .bind(sessionId, siteId)
       .all();
 
     return c.json({
@@ -500,8 +506,10 @@ sessions.post('/create-with-contents', async (c) => {
       }, 400);
     }
 
+    const siteId = c.get('siteId');
+
     // 1단계: 콘텐츠 등록 (병렬)
-    const contentService = new ContentService(c.env, c.executionCtx);
+    const contentService = new ContentService(c.env, c.executionCtx, siteId);
     const contentResults = await Promise.all(
       contents.map(async (item) => {
         try {
@@ -537,8 +545,8 @@ sessions.post('/create-with-contents', async (c) => {
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
-        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         0,
@@ -556,7 +564,8 @@ sessions.post('/create-with-contents', async (c) => {
         settings.choiceCount ?? 3,
         settings.oxCount ?? 2,
         settings.quizDifficulty || 'normal',
-        chatContentIds ? JSON.stringify(chatContentIds) : null
+        chatContentIds ? JSON.stringify(chatContentIds) : null,
+        siteId
       )
       .run();
 
@@ -565,14 +574,14 @@ sessions.post('/create-with-contents', async (c) => {
     // 콘텐츠 연결 (TB_SESSION_CONTENT)
     for (const contentId of contentIds) {
       await c.env.DB
-        .prepare('INSERT INTO TB_SESSION_CONTENT (session_id, content_id) VALUES (?, ?)')
-        .bind(sessionId, contentId)
+        .prepare('INSERT INTO TB_SESSION_CONTENT (session_id, content_id, site_id) VALUES (?, ?, ?)')
+        .bind(sessionId, contentId, siteId)
         .run();
     }
 
     // 3단계: 학습 데이터 + 퀴즈 생성 (병렬)
-    const quizService = new QuizService(c.env);
-    const learningService = new LearningService(c.env);
+    const quizService = new QuizService(c.env, siteId);
+    const learningService = new LearningService(c.env, siteId);
     const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
     const quizOptions = {
       choiceCount: settings.choiceCount ?? 3,
@@ -588,8 +597,8 @@ sessions.post('/create-with-contents', async (c) => {
       const contentTexts = [];
       for (const contentId of contentIds) {
         const content = await c.env.DB
-          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1')
-          .bind(contentId)
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+          .bind(contentId, siteId)
           .first();
         if (content?.content && content.content.trim().length >= 100) {
           contentTexts.push(content.content);
@@ -608,8 +617,8 @@ sessions.post('/create-with-contents', async (c) => {
 
     // 세션 조회
     const session = await c.env.DB
-      .prepare('SELECT * FROM TB_SESSION WHERE id = ?')
-      .bind(sessionId)
+      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND site_id = ?')
+      .bind(sessionId, siteId)
       .first();
 
     return c.json({
@@ -656,6 +665,7 @@ sessions.post('/create-with-contents', async (c) => {
  */
 sessions.get('/:id', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -670,8 +680,8 @@ sessions.get('/:id', async (c) => {
 
     // 세션 조회 (status = 1만)
     const session = await c.env.DB
-      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -691,8 +701,8 @@ sessions.get('/:id', async (c) => {
 
     if (isChild) {
       const parentSession = await c.env.DB
-        .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1')
-        .bind(session.parent_id)
+        .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+        .bind(session.parent_id, siteId)
         .first();
       if (parentSession) {
         sourceSession = parentSession;
@@ -705,10 +715,10 @@ sessions.get('/:id', async (c) => {
       .prepare(`
         SELECT id, role, content, created_at
         FROM TB_MESSAGE
-        WHERE session_id = ? AND status = 1
+        WHERE session_id = ? AND status = 1 AND site_id = ?
         ORDER BY created_at ASC
       `)
-      .bind(id)
+      .bind(id, siteId)
       .all();
 
     // 연결된 콘텐츠 조회 (부모 또는 자기 자신)
@@ -717,9 +727,9 @@ sessions.get('/:id', async (c) => {
         SELECT c.id, c.content_nm
         FROM TB_SESSION_CONTENT sc
         JOIN TB_CONTENT c ON sc.content_id = c.id AND c.status = 1
-        WHERE sc.session_id = ? AND sc.status = 1
+        WHERE sc.session_id = ? AND sc.status = 1 AND sc.site_id = ?
       `)
-      .bind(contentSourceId)
+      .bind(contentSourceId, siteId)
       .all();
 
     // 제목: 부모 세션 제목 우선, 없으면 첫 메시지 기반 생성
@@ -800,6 +810,7 @@ sessions.get('/:id', async (c) => {
  */
 sessions.put('/:id', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -814,8 +825,8 @@ sessions.put('/:id', async (c) => {
 
     // 세션 존재 확인 (status = 1만)
     const session = await c.env.DB
-      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -892,9 +903,9 @@ sessions.put('/:id', async (c) => {
             quiz_difficulty = ?,
             learning_goal = ?, learning_summary = ?, recommended_questions = ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND site_id = ?
       `)
-      .bind(sessionNm, persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, quizDifficulty, learningGoal, learningSummary, recommendedQuestions, id)
+      .bind(sessionNm, persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, quizDifficulty, learningGoal, learningSummary, recommendedQuestions, id, siteId)
       .run();
 
     return c.json({
@@ -940,12 +951,13 @@ sessions.put('/:id', async (c) => {
  */
 sessions.put('/:id/learning-goal', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     if (isNaN(id) || id <= 0) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 세션 ID가 필요합니다.' } }, 400);
     }
 
-    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?').bind(id, siteId).first();
     if (!session) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
     }
@@ -956,7 +968,7 @@ sessions.put('/:id/learning-goal', async (c) => {
     }
 
     const learningGoal = body.learningGoal;
-    await c.env.DB.prepare('UPDATE TB_SESSION SET learning_goal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(learningGoal, id).run();
+    await c.env.DB.prepare('UPDATE TB_SESSION SET learning_goal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?').bind(learningGoal, id, siteId).run();
 
     return c.json({ success: true, data: { id, learningGoal }, message: '학습 목표가 업데이트되었습니다.' });
   } catch (error) {
@@ -971,12 +983,13 @@ sessions.put('/:id/learning-goal', async (c) => {
  */
 sessions.put('/:id/learning-summary', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     if (isNaN(id) || id <= 0) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 세션 ID가 필요합니다.' } }, 400);
     }
 
-    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?').bind(id, siteId).first();
     if (!session) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
     }
@@ -987,7 +1000,7 @@ sessions.put('/:id/learning-summary', async (c) => {
     }
 
     const learningSummary = typeof body.learningSummary === 'object' ? JSON.stringify(body.learningSummary) : body.learningSummary;
-    await c.env.DB.prepare('UPDATE TB_SESSION SET learning_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(learningSummary, id).run();
+    await c.env.DB.prepare('UPDATE TB_SESSION SET learning_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?').bind(learningSummary, id, siteId).run();
 
     return c.json({ success: true, data: { id, learningSummary }, message: '학습 요약이 업데이트되었습니다.' });
   } catch (error) {
@@ -1002,12 +1015,13 @@ sessions.put('/:id/learning-summary', async (c) => {
  */
 sessions.put('/:id/recommended-questions', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     if (isNaN(id) || id <= 0) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 세션 ID가 필요합니다.' } }, 400);
     }
 
-    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?').bind(id, siteId).first();
     if (!session) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
     }
@@ -1018,7 +1032,7 @@ sessions.put('/:id/recommended-questions', async (c) => {
     }
 
     const recommendedQuestions = typeof body.recommendedQuestions === 'object' ? JSON.stringify(body.recommendedQuestions) : body.recommendedQuestions;
-    await c.env.DB.prepare('UPDATE TB_SESSION SET recommended_questions = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(recommendedQuestions, id).run();
+    await c.env.DB.prepare('UPDATE TB_SESSION SET recommended_questions = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?').bind(recommendedQuestions, id, siteId).run();
 
     return c.json({ success: true, data: { id, recommendedQuestions }, message: '추천 질문이 업데이트되었습니다.' });
   } catch (error) {
@@ -1033,6 +1047,7 @@ sessions.put('/:id/recommended-questions', async (c) => {
  */
 sessions.get('/:id/quizzes', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -1047,8 +1062,8 @@ sessions.get('/:id/quizzes', async (c) => {
 
     // 세션 존재 확인 (status = 1만)
     const session = await c.env.DB
-      .prepare('SELECT id, parent_id, choice_count, ox_count FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id, parent_id, choice_count, ox_count FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -1065,7 +1080,7 @@ sessions.get('/:id/quizzes', async (c) => {
     const quizSessionId = session.parent_id > 0 ? session.parent_id : id;
 
     // 세션 기준 퀴즈 조회
-    const quizService = new QuizService(c.env);
+    const quizService = new QuizService(c.env, siteId);
     const quizzes = await quizService.getQuizzesBySession(quizSessionId);
 
     return c.json({
@@ -1097,6 +1112,7 @@ sessions.get('/:id/quizzes', async (c) => {
  */
 sessions.put('/:id/quizzes/reorder', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -1111,8 +1127,8 @@ sessions.put('/:id/quizzes/reorder', async (c) => {
 
     // 세션 존재 확인
     const session = await c.env.DB
-      .prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -1131,10 +1147,10 @@ sessions.put('/:id/quizzes/reorder', async (c) => {
     const { results: quizzes } = await c.env.DB
       .prepare(`
         SELECT id FROM TB_QUIZ
-        WHERE session_id = ? AND status = 1
+        WHERE session_id = ? AND status = 1 AND site_id = ?
         ORDER BY position ASC, created_at ASC
       `)
-      .bind(quizSessionId)
+      .bind(quizSessionId, siteId)
       .all();
 
     if (!quizzes || quizzes.length === 0) {
@@ -1183,6 +1199,7 @@ sessions.put('/:id/quizzes/reorder', async (c) => {
  */
 sessions.post('/:id/quizzes', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -1197,8 +1214,8 @@ sessions.post('/:id/quizzes', async (c) => {
 
     // 세션 조회 (status = 1만)
     const session = await c.env.DB
-      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -1220,9 +1237,9 @@ sessions.post('/:id/quizzes', async (c) => {
         SELECT c.id, c.content
         FROM TB_CONTENT c
         JOIN TB_SESSION_CONTENT sc ON c.id = sc.content_id
-        WHERE sc.session_id = ? AND sc.status = 1 AND c.status = 1
+        WHERE sc.session_id = ? AND sc.status = 1 AND c.status = 1 AND sc.site_id = ?
       `)
-      .bind(contentSourceId)
+      .bind(contentSourceId, siteId)
       .all();
 
     if (!contents || contents.length === 0) {
@@ -1261,13 +1278,13 @@ sessions.post('/:id/quizzes', async (c) => {
       // 기본값 사용
     }
 
-    const quizService = new QuizService(c.env);
+    const quizService = new QuizService(c.env, siteId);
     const allQuizzes = [];
 
     // 기존 세션 퀴즈 삭제 (세션 기준)
     await c.env.DB
-      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1')
-      .bind(id)
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .run();
 
     // 각 콘텐츠별로 퀴즈 재생성 (세션에 귀속)
@@ -1311,12 +1328,13 @@ sessions.post('/:id/quizzes', async (c) => {
  */
 sessions.post('/:id/quiz', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     if (isNaN(id) || id <= 0) {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 세션 ID가 필요합니다.' } }, 400);
     }
 
-    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    const session = await c.env.DB.prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?').bind(id, siteId).first();
     if (!session) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
     }
@@ -1338,17 +1356,17 @@ sessions.post('/:id/quiz', async (c) => {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'choice 타입은 4개의 options 배열이 필수입니다.' } }, 400);
     }
 
-    const quizService = new QuizService(c.env);
+    const quizService = new QuizService(c.env, siteId);
     const quiz = await quizService.addQuizToSession(id, { quizType, question, options, answer, explanation, position });
 
     // 퀴즈 추가 후 세션 퀴즈 재정렬 (4지선다 → OX, 생성일 순)
     const { results: allQuizzes } = await c.env.DB
       .prepare(`
         SELECT id FROM TB_QUIZ
-        WHERE session_id = ? AND status = 1
+        WHERE session_id = ? AND status = 1 AND site_id = ?
         ORDER BY position ASC, created_at ASC
       `)
-      .bind(id)
+      .bind(id, siteId)
       .all();
 
     if (allQuizzes && allQuizzes.length > 0) {
@@ -1377,6 +1395,7 @@ sessions.post('/:id/quiz', async (c) => {
  */
 sessions.get('/:id/quiz/:quizId', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     const quizId = parseInt(c.req.param('quizId'), 10);
 
@@ -1384,7 +1403,7 @@ sessions.get('/:id/quiz/:quizId', async (c) => {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 ID가 필요합니다.' } }, 400);
     }
 
-    const session = await c.env.DB.prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1').bind(id).first();
+    const session = await c.env.DB.prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?').bind(id, siteId).first();
     if (!session) {
       return c.json({ success: false, error: { code: 'NOT_FOUND', message: '세션을 찾을 수 없습니다.' } }, 404);
     }
@@ -1392,8 +1411,8 @@ sessions.get('/:id/quiz/:quizId', async (c) => {
     const quizSessionId = session.parent_id > 0 ? session.parent_id : id;
 
     const quiz = await c.env.DB
-      .prepare('SELECT id, session_id, content_id, quiz_type, question, options, answer, explanation, position, created_at FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1')
-      .bind(quizId, quizSessionId)
+      .prepare('SELECT id, session_id, content_id, quiz_type, question, options, answer, explanation, position, created_at FROM TB_QUIZ WHERE id = ? AND session_id = ? AND status = 1 AND site_id = ?')
+      .bind(quizId, quizSessionId, siteId)
       .first();
 
     if (!quiz) {
@@ -1428,6 +1447,7 @@ sessions.get('/:id/quiz/:quizId', async (c) => {
  */
 sessions.put('/:id/quiz/:quizId', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     const quizId = parseInt(c.req.param('quizId'), 10);
 
@@ -1445,7 +1465,7 @@ sessions.put('/:id/quiz/:quizId', async (c) => {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'choice 타입은 4개의 options 배열이 필수입니다.' } }, 400);
     }
 
-    const quizService = new QuizService(c.env);
+    const quizService = new QuizService(c.env, siteId);
     const updated = await quizService.updateSessionQuiz(quizId, id, { quizType, question, options, answer, explanation, position });
 
     if (!updated) {
@@ -1456,10 +1476,10 @@ sessions.put('/:id/quiz/:quizId', async (c) => {
     const { results: allQuizzes } = await c.env.DB
       .prepare(`
         SELECT id FROM TB_QUIZ
-        WHERE session_id = ? AND status = 1
+        WHERE session_id = ? AND status = 1 AND site_id = ?
         ORDER BY position ASC, created_at ASC
       `)
-      .bind(id)
+      .bind(id, siteId)
       .all();
 
     if (allQuizzes && allQuizzes.length > 0) {
@@ -1484,6 +1504,7 @@ sessions.put('/:id/quiz/:quizId', async (c) => {
  */
 sessions.delete('/:id/quiz/:quizId', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
     const quizId = parseInt(c.req.param('quizId'), 10);
 
@@ -1491,7 +1512,7 @@ sessions.delete('/:id/quiz/:quizId', async (c) => {
       return c.json({ success: false, error: { code: 'VALIDATION_ERROR', message: '유효한 ID가 필요합니다.' } }, 400);
     }
 
-    const quizService = new QuizService(c.env);
+    const quizService = new QuizService(c.env, siteId);
     const deleted = await quizService.deleteSessionQuiz(quizId, id);
 
     if (!deleted) {
@@ -1502,10 +1523,10 @@ sessions.delete('/:id/quiz/:quizId', async (c) => {
     const { results: allQuizzes } = await c.env.DB
       .prepare(`
         SELECT id FROM TB_QUIZ
-        WHERE session_id = ? AND status = 1
+        WHERE session_id = ? AND status = 1 AND site_id = ?
         ORDER BY position ASC, created_at ASC
       `)
-      .bind(id)
+      .bind(id, siteId)
       .all();
 
     if (allQuizzes && allQuizzes.length > 0) {
@@ -1530,6 +1551,7 @@ sessions.delete('/:id/quiz/:quizId', async (c) => {
  */
 sessions.delete('/:id/messages', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -1540,8 +1562,8 @@ sessions.delete('/:id/messages', async (c) => {
     }
 
     const session = await c.env.DB
-      .prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -1552,8 +1574,8 @@ sessions.delete('/:id/messages', async (c) => {
     }
 
     await c.env.DB
-      .prepare('UPDATE TB_MESSAGE SET status = -1 WHERE session_id = ? AND status = 1')
-      .bind(id)
+      .prepare('UPDATE TB_MESSAGE SET status = -1 WHERE session_id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .run();
 
     return c.json({ success: true, message: '대화 내용이 초기화되었습니다.' });
@@ -1570,6 +1592,7 @@ sessions.delete('/:id/messages', async (c) => {
  */
 sessions.delete('/:id', async (c) => {
   try {
+    const siteId = c.get('siteId');
     const id = parseInt(c.req.param('id'), 10);
 
     if (isNaN(id) || id <= 0) {
@@ -1584,8 +1607,8 @@ sessions.delete('/:id', async (c) => {
 
     // 세션 존재 확인 (status = 1만)
     const session = await c.env.DB
-      .prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id, parent_id FROM TB_SESSION WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .first();
 
     if (!session) {
@@ -1601,52 +1624,52 @@ sessions.delete('/:id', async (c) => {
     // 부모 세션 삭제 시 자식 세션도 연쇄 삭제
     if (session.parent_id === 0) {
       const { results: children } = await c.env.DB
-        .prepare('SELECT id FROM TB_SESSION WHERE parent_id = ? AND status = 1')
-        .bind(id)
+        .prepare('SELECT id FROM TB_SESSION WHERE parent_id = ? AND status = 1 AND site_id = ?')
+        .bind(id, siteId)
         .all();
 
       for (const child of (children || [])) {
         await c.env.DB
-          .prepare('UPDATE TB_MESSAGE SET status = -1 WHERE session_id = ?')
-          .bind(child.id)
+          .prepare('UPDATE TB_MESSAGE SET status = -1 WHERE session_id = ? AND site_id = ?')
+          .bind(child.id, siteId)
           .run();
         await c.env.DB
-          .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1')
-          .bind(child.id)
+          .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1 AND site_id = ?')
+          .bind(child.id, siteId)
           .run();
         await c.env.DB
-          .prepare('UPDATE TB_SESSION SET status = -1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind(child.id)
+          .prepare('UPDATE TB_SESSION SET status = -1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?')
+          .bind(child.id, siteId)
           .run();
       }
     }
 
     // 메시지 soft delete (status = -1)
     await c.env.DB
-      .prepare('UPDATE TB_MESSAGE SET status = -1 WHERE session_id = ?')
-      .bind(id)
+      .prepare('UPDATE TB_MESSAGE SET status = -1 WHERE session_id = ? AND site_id = ?')
+      .bind(id, siteId)
       .run();
 
     // 세션-콘텐츠 연결 soft delete (status = -1)
     await c.env.DB
-      .prepare('UPDATE TB_SESSION_CONTENT SET status = -1 WHERE session_id = ?')
-      .bind(id)
+      .prepare('UPDATE TB_SESSION_CONTENT SET status = -1 WHERE session_id = ? AND site_id = ?')
+      .bind(id, siteId)
       .run();
 
     // 세션 퀴즈 soft delete
     await c.env.DB
-      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1')
-      .bind(id)
+      .prepare('UPDATE TB_QUIZ SET status = -1 WHERE session_id = ? AND status = 1 AND site_id = ?')
+      .bind(id, siteId)
       .run();
 
     // Vectorize에서 학습 임베딩 삭제
-    const learningService = new LearningService(c.env);
+    const learningService = new LearningService(c.env, siteId);
     await learningService.deleteLearningEmbeddings(id);
 
     // 세션 soft delete (status = -1)
     await c.env.DB
-      .prepare('UPDATE TB_SESSION SET status = -1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(id)
+      .prepare('UPDATE TB_SESSION SET status = -1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?')
+      .bind(id, siteId)
       .run();
 
     return c.json({

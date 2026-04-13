@@ -31,11 +31,11 @@ contents.get('/', async (c) => {
   try {
     const page = Math.max(1, parseInt(c.req.query('page') || '1'));
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
-    const lessonIdParam = c.req.query('lesson_id');
+    const lessonIdParam = c.req.query('lessonId') || c.req.query('lesson_id');
     const lessonId = lessonIdParam ? parseInt(lessonIdParam, 10) : null;
-    const fileType = c.req.query('file_type') || null;
+    const fileType = c.req.query('fileType') || c.req.query('file_type') || null;
 
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const result = await contentService.listContents(page, limit, lessonId, fileType);
 
     return c.json({
@@ -67,13 +67,13 @@ contents.get('/', async (c) => {
 contents.post('/', async (c) => {
   try {
     const contentType = c.req.header('content-type') || '';
-    const contentService = new ContentService(c.env, c.executionCtx);
+    const contentService = new ContentService(c.env, c.executionCtx, c.get('siteId'));
 
     // JSON 요청 (텍스트 또는 링크)
     if (contentType.includes('application/json')) {
       const body = await c.req.json();
       const { type, title, content, url } = body;
-      const lessonId = body.lesson_id ? parseInt(body.lesson_id, 10) : null;
+      const lessonId = (body.lessonId || body.lesson_id) ? parseInt(body.lessonId || body.lesson_id, 10) : null;
 
       if (type === 'text') {
         // 텍스트 콘텐츠 처리
@@ -269,7 +269,7 @@ contents.post('/', async (c) => {
  */
 contents.post('/regenerate-all-quizzes', async (c) => {
   try {
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const result = await contentService.regenerateAllQuizzes();
 
     return c.json({
@@ -296,7 +296,7 @@ contents.post('/regenerate-all-quizzes', async (c) => {
  */
 contents.post('/reembed', async (c) => {
   try {
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const result = await contentService.reembedAllContents();
 
     return c.json({
@@ -334,7 +334,7 @@ contents.get('/:id', async (c) => {
       }, 400);
     }
 
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const content = await contentService.getContent(id);
 
     if (!content) {
@@ -384,7 +384,8 @@ contents.put('/:id', async (c) => {
 
     const body = await c.req.json();
     const { title, content } = body;
-    const lessonId = body.lesson_id !== undefined ? (body.lesson_id ? parseInt(body.lesson_id, 10) : null) : undefined;
+    const rawLessonId = body.lessonId !== undefined ? body.lessonId : body.lesson_id;
+    const lessonId = rawLessonId !== undefined ? (rawLessonId ? parseInt(rawLessonId, 10) : null) : undefined;
 
     if (!title || title.trim().length === 0) {
       return c.json({
@@ -396,7 +397,7 @@ contents.put('/:id', async (c) => {
       }, 400);
     }
 
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const updated = await contentService.updateContent(id, title, content, lessonId);
 
     if (!updated) {
@@ -469,7 +470,7 @@ contents.post('/:id/quizzes', async (c) => {
       // 기본값 사용
     }
 
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const result = await contentService.regenerateQuizzes(id, quizOptions);
 
     if (!result) {
@@ -518,7 +519,7 @@ contents.get('/:id/quizzes', async (c) => {
       }, 400);
     }
 
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const quizzes = await contentService.getQuizzes(id);
 
     return c.json({
@@ -560,7 +561,7 @@ contents.delete('/:id', async (c) => {
       }, 400);
     }
 
-    const contentService = new ContentService(c.env);
+    const contentService = new ContentService(c.env, null, c.get('siteId'));
     const deleted = await contentService.deleteContent(id);
 
     if (!deleted) {

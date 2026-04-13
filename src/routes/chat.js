@@ -75,7 +75,7 @@ chat.post('/', async (c) => {
     }
 
     // 채팅 서비스 호출
-    const chatService = new ChatService(c.env);
+    const chatService = new ChatService(c.env, c.get('siteId'));
     const result = await chatService.chat(message.trim(), sessionId, settings || {});
 
     return c.json({
@@ -130,7 +130,7 @@ chat.post('/stream', async (c) => {
     }, 400);
   }
 
-  const chatService = new ChatService(c.env);
+  const chatService = new ChatService(c.env, c.get('siteId'));
   const streamStart = Date.now();
 
   // RAG 컨텍스트 준비 (임베딩, 벡터 검색, 대화 내역)

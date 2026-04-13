@@ -43,5 +43,9 @@ export const authMiddleware = async (c, next) => {
     }, 401);
   }
 
+  // 멀티사이트: X-Site-Id 헤더에서 site_id 추출 (기본값 1)
+  const siteId = parseInt(c.req.header('X-Site-Id') || '1', 10) || 1;
+  c.set('siteId', siteId);
+
   await next();
 };

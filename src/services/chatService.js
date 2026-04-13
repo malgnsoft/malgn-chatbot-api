@@ -11,10 +11,11 @@ import { EmbeddingService } from './embeddingService.js';
 import { QuizService } from './quizService.js';
 
 export class ChatService {
-  constructor(env) {
+  constructor(env, siteId = 0) {
     this.env = env;
+    this.siteId = siteId;
     this.embeddingService = new EmbeddingService(env);
-    this.quizService = new QuizService(env);
+    this.quizService = new QuizService(env, siteId);
     // Workers AI 사용 (Gemma 3 12B - Google, 다국어 우수)
     this.llmModel = '@cf/google/gemma-3-12b-it';
 
@@ -47,11 +48,11 @@ export class ChatService {
         .prepare(`
           SELECT role, content
           FROM TB_MESSAGE
-          WHERE session_id = ? AND status = 1
+          WHERE session_id = ? AND site_id = ? AND status = 1
           ORDER BY created_at DESC
           LIMIT ?
         `)
-        .bind(sessionId, limit)
+        .bind(sessionId, this.siteId, limit)
         .all();
 
       // 최신순으로 조회했으므로 역순으로 정렬하여 시간순으로 반환
@@ -76,8 +77,8 @@ export class ChatService {
 
     try {
       const session = await this.env.DB
-        .prepare('SELECT parent_id, chat_content_ids FROM TB_SESSION WHERE id = ? AND status = 1')
-        .bind(sessionId)
+        .prepare('SELECT parent_id, chat_content_ids FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+        .bind(sessionId, this.siteId)
         .first();
 
       const effectiveSessionId = (session && session.parent_id > 0) ? session.parent_id : sessionId;
@@ -86,8 +87,8 @@ export class ChatService {
       let chatContentIdsRaw = session?.chat_content_ids;
       if (session && session.parent_id > 0 && !chatContentIdsRaw) {
         const parent = await this.env.DB
-          .prepare('SELECT chat_content_ids FROM TB_SESSION WHERE id = ? AND status = 1')
-          .bind(session.parent_id)
+          .prepare('SELECT chat_content_ids FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+          .bind(session.parent_id, this.siteId)
           .first();
         chatContentIdsRaw = parent?.chat_content_ids;
       }
@@ -102,9 +103,9 @@ export class ChatService {
         .prepare(`
           SELECT content_id
           FROM TB_SESSION_CONTENT
-          WHERE session_id = ? AND status = 1
+          WHERE session_id = ? AND site_id = ? AND status = 1
         `)
-        .bind(effectiveSessionId)
+        .bind(effectiveSessionId, this.siteId)
         .all();
 
       const contentIds = (results || []).map(r => r.content_id);
@@ -131,8 +132,8 @@ export class ChatService {
 
     try {
       const session = await this.env.DB
-        .prepare('SELECT parent_id, learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND status = 1')
-        .bind(sessionId)
+        .prepare('SELECT parent_id, learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+        .bind(sessionId, this.siteId)
         .first();
 
       if (!session) return { learningGoal: null, learningSummary: null, recommendedQuestions: null };
@@ -140,8 +141,8 @@ export class ChatService {
       let source = session;
       if (session.parent_id > 0) {
         const parent = await this.env.DB
-          .prepare('SELECT learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND status = 1')
-          .bind(session.parent_id)
+          .prepare('SELECT learning_goal, learning_summary, recommended_questions FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+          .bind(session.parent_id, this.siteId)
           .first();
         if (parent) source = parent;
       }
@@ -455,16 +456,16 @@ export class ChatService {
 
       // 세션 조회 (parent_id 확인)
       const session = await this.env.DB
-        .prepare('SELECT parent_id, learning_goal, learning_summary FROM TB_SESSION WHERE id = ? AND status = 1')
-        .bind(sessionId)
+        .prepare('SELECT parent_id, learning_goal, learning_summary FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+        .bind(sessionId, this.siteId)
         .first();
 
       // 자식 세션이면 부모의 학습 데이터 사용
       let learningSource = session;
       if (session && session.parent_id > 0) {
         const parentSession = await this.env.DB
-          .prepare('SELECT learning_goal, learning_summary FROM TB_SESSION WHERE id = ? AND status = 1')
-          .bind(session.parent_id)
+          .prepare('SELECT learning_goal, learning_summary FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+          .bind(session.parent_id, this.siteId)
           .first();
         if (parentSession) learningSource = parentSession;
       }
@@ -480,8 +481,8 @@ export class ChatService {
       if (contentIds && contentIds.length > 0) {
         const placeholders = contentIds.map(() => '?').join(',');
         const { results } = await this.env.DB
-          .prepare(`SELECT content_nm, content FROM TB_CONTENT WHERE id IN (${placeholders}) AND status = 1`)
-          .bind(...contentIds)
+          .prepare(`SELECT content_nm, content FROM TB_CONTENT WHERE id IN (${placeholders}) AND site_id = ? AND status = 1`)
+          .bind(...contentIds, this.siteId)
           .all();
 
         for (const content of (results || [])) {
@@ -701,14 +702,14 @@ export class ChatService {
       // D1 batch: 단일 라운드트립으로 3개 쿼리 실행
       await this.env.DB.batch([
         this.env.DB
-          .prepare('INSERT INTO TB_MESSAGE (session_id, role, content) VALUES (?, ?, ?)')
-          .bind(sessionId, 'user', userMessage),
+          .prepare('INSERT INTO TB_MESSAGE (session_id, role, content, site_id) VALUES (?, ?, ?, ?)')
+          .bind(sessionId, 'user', userMessage, this.siteId),
         this.env.DB
-          .prepare('INSERT INTO TB_MESSAGE (session_id, role, content) VALUES (?, ?, ?)')
-          .bind(sessionId, 'assistant', assistantResponse),
+          .prepare('INSERT INTO TB_MESSAGE (session_id, role, content, site_id) VALUES (?, ?, ?, ?)')
+          .bind(sessionId, 'assistant', assistantResponse, this.siteId),
         this.env.DB
-          .prepare('UPDATE TB_SESSION SET updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind(sessionId)
+          .prepare('UPDATE TB_SESSION SET updated_at = CURRENT_TIMESTAMP WHERE id = ? AND site_id = ?')
+          .bind(sessionId, this.siteId)
       ]);
 
       console.log(`[ChatService] Messages saved to DB for session ${sessionId}`);

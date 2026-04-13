@@ -10,11 +10,12 @@ import { EmbeddingService } from './embeddingService.js';
 import { QuizService } from './quizService.js';
 
 export class ContentService {
-  constructor(env, executionCtx = null) {
+  constructor(env, executionCtx = null, siteId = 0) {
     this.env = env;
     this.executionCtx = executionCtx;
+    this.siteId = siteId;
     this.embeddingService = new EmbeddingService(env);
-    this.quizService = new QuizService(env);
+    this.quizService = new QuizService(env, siteId);
   }
 
   /**
@@ -24,8 +25,8 @@ export class ContentService {
     const offset = (page - 1) * limit;
 
     // 동적 WHERE 절 구성
-    const conditions = ['status = 1'];
-    const params = [];
+    const conditions = ['status = 1', 'site_id = ?'];
+    const params = [this.siteId];
     if (lessonId !== null && lessonId !== undefined) {
       conditions.push('lesson_id = ?');
       params.push(lessonId);
@@ -63,8 +64,8 @@ export class ContentService {
   async getContent(id) {
     // 콘텐츠 조회 (status = 1만)
     const content = await this.env.DB
-      .prepare('SELECT id, content_nm, filename, file_type, file_size, content, lesson_id, status, created_at, updated_at FROM TB_CONTENT WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id, content_nm, filename, file_type, file_size, content, lesson_id, status, created_at, updated_at FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, this.siteId)
       .first();
 
     if (!content) {
@@ -93,10 +94,10 @@ export class ContentService {
     // D1에 콘텐츠 저장
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentTitle, '', 'text', contentSize, contentText, lessonId)
+      .bind(contentTitle, '', 'text', contentSize, contentText, lessonId, this.siteId)
       .run();
 
     const contentId = insertResult.meta.last_row_id;
@@ -198,10 +199,10 @@ export class ContentService {
     // D1에 콘텐츠 저장
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentTitle, url, 'link', contentSize, contentText, lessonId)
+      .bind(contentTitle, url, 'link', contentSize, contentText, lessonId, this.siteId)
       .run();
 
     const contentId = insertResult.meta.last_row_id;
@@ -343,10 +344,10 @@ export class ContentService {
     // D1에 콘텐츠 저장
     const insertResult = await this.env.DB
       .prepare(`
-        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content, lesson_id, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      .bind(contentTitle, filename, fileType, fileSize, contentText, lessonId)
+      .bind(contentTitle, filename, fileType, fileSize, contentText, lessonId, this.siteId)
       .run();
 
     const contentId = insertResult.meta.last_row_id;
@@ -401,8 +402,8 @@ export class ContentService {
   async regenerateQuizzes(contentId, quizOptions = {}) {
     // 콘텐츠 존재 확인
     const content = await this.env.DB
-      .prepare('SELECT id, content FROM TB_CONTENT WHERE id = ? AND status = 1')
-      .bind(contentId)
+      .prepare('SELECT id, content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(contentId, this.siteId)
       .first();
 
     if (!content) {
@@ -439,10 +440,11 @@ export class ContentService {
         SELECT c.id, c.content_nm, c.content
         FROM TB_CONTENT c
         LEFT JOIN TB_QUIZ q ON c.id = q.content_id AND q.status = 1
-        WHERE c.status = 1
+        WHERE c.status = 1 AND c.site_id = ?
         GROUP BY c.id
         HAVING COUNT(q.id) = 0
       `)
+      .bind(this.siteId)
       .all();
 
     if (!contentsWithoutQuizzes || contentsWithoutQuizzes.length === 0) {
@@ -565,8 +567,8 @@ export class ContentService {
 
     // 콘텐츠 존재 확인 (status = 1만)
     const existingContent = await this.env.DB
-      .prepare('SELECT id, file_type, lesson_id FROM TB_CONTENT WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id, file_type, lesson_id FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, this.siteId)
       .first();
 
     if (!existingContent) {
@@ -615,8 +617,8 @@ export class ContentService {
   async deleteContent(id) {
     // 콘텐츠 존재 확인 (status = 1만)
     const content = await this.env.DB
-      .prepare('SELECT id FROM TB_CONTENT WHERE id = ? AND status = 1')
-      .bind(id)
+      .prepare('SELECT id FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+      .bind(id, this.siteId)
       .first();
 
     if (!content) {
@@ -641,7 +643,8 @@ export class ContentService {
   async reembedAllContents() {
     // 모든 활성 콘텐츠 조회
     const { results } = await this.env.DB
-      .prepare('SELECT id, content_nm, content FROM TB_CONTENT WHERE status = 1')
+      .prepare('SELECT id, content_nm, content FROM TB_CONTENT WHERE status = 1 AND site_id = ?')
+      .bind(this.siteId)
       .all();
 
     if (!results || results.length === 0) {
