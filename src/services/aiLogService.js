@@ -10,17 +10,21 @@ export class AiLogService {
     this.siteId = siteId;
 
     // 모델별 뉴런 환산 계수 (1M 토큰당 뉴런)
+    // AI Gateway 실제 비용에서 역산 (2026-04-14 기준)
     this.neuronRates = {
       // Gemma 3 12B (채팅/학습/퀴즈)
-      '@cf/google/gemma-3-12b-it': { input: 410, output: 1600 },
-      // Mistral Small 3.1 24B
-      '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 580, output: 2200 },
-      // BGE-M3 (임베딩)
-      '@cf/baai/bge-m3': { input: 35, output: 0 },
+      '@cf/google/gemma-3-12b-it': { input: 32000, output: 50000 },
+      // Mistral Small 3.1 24B (Gemma 대비 약 2배 추정)
+      '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 45000, output: 70000 },
+      // BGE-M3 (임베딩) - Gateway에서 무료 표시, 최소 뉴런 소비
+      '@cf/baai/bge-m3': { input: 130, output: 0 },
     };
 
     // 초과 뉴런 비용: $0.011 / 1,000 뉴런
     this.costPerNeuron = 0.011 / 1000;
+
+    // USD → KRW 환율
+    this.exchangeRate = 1450;
   }
 
   /**
@@ -120,8 +124,15 @@ export class AiLogService {
       .bind(...params, limit, offset)
       .all();
 
+    const rate = this.exchangeRate;
+    const logs = (results || []).map(row => ({
+      ...row,
+      estimated_cost_krw: Math.round(row.estimated_cost * rate * 100000000) / 100000000
+    }));
+
     return {
-      logs: results || [],
+      logs,
+      exchangeRate: rate,
       pagination: {
         page,
         limit,
@@ -168,18 +179,28 @@ export class AiLogService {
       .bind(...params)
       .all();
 
+    const rate = this.exchangeRate;
+
+    // 타입별 원화 추가
+    const byType = (results || []).map(row => ({
+      ...row,
+      total_cost_krw: Math.round(row.total_cost * rate * 100) / 100
+    }));
+
     // 전체 합계
-    const totals = (results || []).reduce((acc, row) => {
+    const totals = byType.reduce((acc, row) => {
       acc.totalRequests += row.count;
       acc.totalTokens += row.total_tokens;
       acc.totalNeurons += row.total_neurons;
       acc.totalCost += row.total_cost;
+      acc.totalCostKrw += row.total_cost_krw;
       return acc;
-    }, { totalRequests: 0, totalTokens: 0, totalNeurons: 0, totalCost: 0 });
+    }, { totalRequests: 0, totalTokens: 0, totalNeurons: 0, totalCost: 0, totalCostKrw: 0 });
 
     return {
-      byType: results || [],
-      totals
+      byType,
+      totals,
+      exchangeRate: rate
     };
   }
 }
