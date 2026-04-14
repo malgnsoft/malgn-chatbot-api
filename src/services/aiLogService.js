@@ -8,6 +8,8 @@ export class AiLogService {
   constructor(env, siteId = 0) {
     this.env = env;
     this.siteId = siteId;
+    this._sessionId = null;
+    this._lessonId = null;
 
     // 모델별 뉴런 환산 계수 (1M 토큰당 뉴런)
     // AI Gateway 실제 비용에서 역산 (2026-04-14 기준)
@@ -47,6 +49,14 @@ export class AiLogService {
   }
 
   /**
+   * 기본 컨텍스트 설정 (이후 log() 호출 시 자동 포함)
+   */
+  setContext(sessionId, lessonId) {
+    this._sessionId = sessionId || null;
+    this._lessonId = lessonId || null;
+  }
+
+  /**
    * AI 사용 로그 저장
    * @param {Object} params
    * @param {number} params.sessionId - 세션 ID
@@ -56,7 +66,9 @@ export class AiLogService {
    * @param {Object} params.usage - { prompt_tokens, completion_tokens, total_tokens }
    * @param {number} params.latencyMs - 응답 시간 (ms)
    */
-  async log({ sessionId = null, lessonId = null, requestType, model, usage = {}, latencyMs = 0 }) {
+  async log({ sessionId, lessonId, requestType, model, usage = {}, latencyMs = 0 }) {
+    sessionId = sessionId ?? this._sessionId;
+    lessonId = lessonId ?? this._lessonId;
     try {
       const promptTokens = usage.prompt_tokens || 0;
       const completionTokens = usage.completion_tokens || 0;

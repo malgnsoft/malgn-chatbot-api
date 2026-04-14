@@ -16,6 +16,10 @@ export class EmbeddingService {
     this.aiLogService = new AiLogService(env, siteId);
   }
 
+  setContext(sessionId, lessonId) {
+    this.aiLogService.setContext(sessionId, lessonId);
+  }
+
   /**
    * 텍스트를 임베딩 벡터로 변환
    * @param {string} text - 변환할 텍스트

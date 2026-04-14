@@ -373,6 +373,7 @@ sessions.post('/', async (c) => {
 
     // 퀴즈 생성 준비 (퀴즈 수가 0이면 스킵) — 세션 전체 기준으로 설정 수만큼만 생성
     const quizService = new QuizService(c.env, siteId);
+    quizService.setContext(sessionId, lessonId);
     const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
     const quizOptions = {
       choiceCount: settings.choiceCount ?? 3,
@@ -402,6 +403,7 @@ sessions.post('/', async (c) => {
 
     // 학습 데이터 + 퀴즈 생성 병렬 실행 (퀴즈 완료까지 대기)
     const learningService = new LearningService(c.env, siteId);
+    learningService.setContext(sessionId, lessonId);
     const parallelTasks = [learningService.generateAndStoreLearningData(sessionId, contentIds, settings)];
     if (quizPromise) parallelTasks.push(quizPromise);
     const [learningData] = await Promise.all(parallelTasks);
@@ -581,7 +583,9 @@ sessions.post('/create-with-contents', async (c) => {
 
     // 3단계: 학습 데이터 + 퀴즈 생성 (병렬)
     const quizService = new QuizService(c.env, siteId);
+    quizService.setContext(sessionId, lessonId);
     const learningService = new LearningService(c.env, siteId);
+    learningService.setContext(sessionId, lessonId);
     const totalQuizCount = (settings.choiceCount ?? 3) + (settings.oxCount ?? 2);
     const quizOptions = {
       choiceCount: settings.choiceCount ?? 3,
@@ -1279,6 +1283,7 @@ sessions.post('/:id/quizzes', async (c) => {
     }
 
     const quizService = new QuizService(c.env, siteId);
+    quizService.setContext(id, session.lesson_id);
     const allQuizzes = [];
 
     // 기존 세션 퀴즈 삭제 (세션 기준)

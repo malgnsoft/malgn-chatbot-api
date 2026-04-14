@@ -18,6 +18,10 @@ export class QuizService {
     this.model = '@cf/google/gemma-3-12b-it';
   }
 
+  setContext(sessionId, lessonId) {
+    this.aiLogService.setContext(sessionId, lessonId);
+  }
+
   /**
    * 콘텐츠 기반으로 퀴즈 생성 (세션 생성 시 호출)
    * @param {number} contentId - 콘텐츠 ID

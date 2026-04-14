@@ -17,6 +17,11 @@ export class LearningService {
     this.model = '@cf/google/gemma-3-12b-it';
   }
 
+  setContext(sessionId, lessonId) {
+    this.aiLogService.setContext(sessionId, lessonId);
+    this.embeddingService.setContext(sessionId, lessonId);
+  }
+
   /**
    * 세션에 대한 학습 메타데이터 생성 및 저장
    * @param {number} sessionId - 세션 ID
