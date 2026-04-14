@@ -13,6 +13,7 @@ import { swaggerUI } from '@hono/swagger-ui';
 import chatRoutes from './routes/chat.js';
 import contentsRoutes from './routes/contents.js';
 import sessionsRoutes from './routes/sessions.js';
+import aiLogsRoutes from './routes/aiLogs.js';
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -29,18 +30,20 @@ app.use('*', logger());
 app.use('*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization']
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Site-Id']
 }));
 
 // 보호 경로에 API Key 인증 미들웨어 적용
 app.use('/chat/*', authMiddleware);
 app.use('/contents/*', authMiddleware);
 app.use('/sessions/*', authMiddleware);
+app.use('/ai-logs/*', authMiddleware);
 
 // Routes
 app.route('/chat', chatRoutes);
 app.route('/contents', contentsRoutes);
 app.route('/sessions', sessionsRoutes);
+app.route('/ai-logs', aiLogsRoutes);
 
 // Root endpoint → docs 리다이렉트
 app.get('/', (c) => c.redirect('/docs'));

@@ -7,10 +7,13 @@
  * 퀴즈는 콘텐츠 업로드 시 생성되어 TB_QUIZ에 content_id로 저장됩니다.
  * 세션 생성 시에는 연결된 콘텐츠의 퀴즈를 조회하여 사용합니다.
  */
+import { AiLogService } from './aiLogService.js';
+
 export class QuizService {
   constructor(env, siteId = 0) {
     this.env = env;
     this.siteId = siteId;
+    this.aiLogService = new AiLogService(env, siteId);
     // Gemma 3 12B - Google, 다국어 우수
     this.model = '@cf/google/gemma-3-12b-it';
   }
@@ -249,7 +252,8 @@ export class QuizService {
   /**
    * Workers AI로 LLM 호출 (AI Gateway 사용)
    */
-  async callWorkersAI(systemPrompt, userPrompt) {
+  async callWorkersAI(systemPrompt, userPrompt, requestType = 'quiz') {
+    const startTime = Date.now();
     const result = await this.env.AI.run(
       this.model,
       {
@@ -267,6 +271,14 @@ export class QuizService {
         }
       }
     );
+
+    // AI 사용 로그
+    this.aiLogService.log({
+      requestType,
+      model: this.model,
+      usage: result?.usage || {},
+      latencyMs: Date.now() - startTime
+    }).catch(() => {});
 
     return result.response || '';
   }
@@ -311,7 +323,7 @@ ${isMathScience ? this.getMathScienceInstruction() : ''}`;
 - 선택지는 구체적인 내용으로 작성
 
 내용:
-${context.substring(0, 4000)}`);
+${context.substring(0, 4000)}`, 'quiz_choice');
 
         // JSON 파싱 (```json ... ``` 제거, LaTeX 이스케이프 보정)
         const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -406,7 +418,7 @@ ${isMathScience ? this.getMathScienceInstruction() : ''}`;
 - 물음표(?)로 끝나는 의문문 절대 금지
 
 내용:
-${context.substring(0, 4000)}`);
+${context.substring(0, 4000)}`, 'quiz_ox');
 
         // JSON 파싱 (```json ... ``` 제거, LaTeX 이스케이프 보정)
         const jsonMatch = content.match(/\[[\s\S]*\]/);

@@ -14,7 +14,7 @@ export class ContentService {
     this.env = env;
     this.executionCtx = executionCtx;
     this.siteId = siteId;
-    this.embeddingService = new EmbeddingService(env);
+    this.embeddingService = new EmbeddingService(env, siteId);
     this.quizService = new QuizService(env, siteId);
   }
 

@@ -5,12 +5,14 @@
  * 임베딩하여 Vectorize에 저장하는 서비스입니다.
  */
 import { EmbeddingService } from './embeddingService.js';
+import { AiLogService } from './aiLogService.js';
 
 export class LearningService {
   constructor(env, siteId = 0) {
     this.env = env;
     this.siteId = siteId;
-    this.embeddingService = new EmbeddingService(env);
+    this.aiLogService = new AiLogService(env, siteId);
+    this.embeddingService = new EmbeddingService(env, siteId);
     // Gemma 3 12B - Google, 다국어 우수, 80K 컨텍스트
     this.model = '@cf/google/gemma-3-12b-it';
   }
@@ -254,6 +256,7 @@ ${context}`;
       console.log('[LearningService] Calling Workers AI with model:', this.model);
       console.log('[LearningService] User prompt length:', userPrompt.length);
 
+      const startTime = Date.now();
       const result = await this.env.AI.run(
         this.model,
         {
@@ -273,6 +276,14 @@ ${context}`;
       );
 
       console.log('[LearningService] Workers AI result:', JSON.stringify(result));
+
+      // AI 사용 로그
+      this.aiLogService.log({
+        requestType: 'learning',
+        model: this.model,
+        usage: result?.usage || {},
+        latencyMs: Date.now() - startTime
+      }).catch(() => {});
 
       if (!result || !result.response) {
         console.error('[LearningService] Workers AI failed: no response', result);
@@ -406,6 +417,7 @@ ${questionList}
 ${truncatedContext}`;
 
     try {
+      const startTime = Date.now();
       const result = await this.env.AI.run(
         this.model,
         {
@@ -418,6 +430,14 @@ ${truncatedContext}`;
         },
         { gateway: { id: 'malgn-chatbot', skipCache: true } }
       );
+
+      // AI 사용 로그
+      this.aiLogService.log({
+        requestType: 'learning_answer',
+        model: this.model,
+        usage: result?.usage || {},
+        latencyMs: Date.now() - startTime
+      }).catch(() => {});
 
       if (!result?.response) return questions;
 

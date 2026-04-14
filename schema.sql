@@ -121,3 +121,29 @@ CREATE INDEX IF NOT EXISTS idx_quiz_content ON TB_QUIZ(content_id, position);
 CREATE INDEX IF NOT EXISTS idx_quiz_session ON TB_QUIZ(session_id, position);
 CREATE INDEX IF NOT EXISTS idx_quiz_status ON TB_QUIZ(status);
 CREATE INDEX IF NOT EXISTS idx_quiz_site_id ON TB_QUIZ(site_id);
+
+-- TB_AI_LOG: AI 사용 로그
+-- request_type: 'chat', 'learning', 'learning_answer', 'quiz_choice', 'quiz_ox', 'embedding'
+CREATE TABLE IF NOT EXISTS TB_AI_LOG (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER,
+  content_id INTEGER,
+  request_type TEXT NOT NULL,
+  model TEXT,
+  prompt_tokens INTEGER DEFAULT 0,
+  completion_tokens INTEGER DEFAULT 0,
+  total_tokens INTEGER DEFAULT 0,
+  neurons REAL DEFAULT 0,
+  estimated_cost REAL DEFAULT 0,
+  latency_ms INTEGER DEFAULT 0,
+  site_id INTEGER NOT NULL DEFAULT 0,
+  status INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for AI log
+CREATE INDEX IF NOT EXISTS idx_ai_log_site_id ON TB_AI_LOG(site_id);
+CREATE INDEX IF NOT EXISTS idx_ai_log_request_type ON TB_AI_LOG(request_type);
+CREATE INDEX IF NOT EXISTS idx_ai_log_session_id ON TB_AI_LOG(session_id);
+CREATE INDEX IF NOT EXISTS idx_ai_log_created_at ON TB_AI_LOG(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_log_site_created ON TB_AI_LOG(site_id, created_at DESC);

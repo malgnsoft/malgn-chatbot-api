@@ -9,13 +9,15 @@
  */
 import { EmbeddingService } from './embeddingService.js';
 import { QuizService } from './quizService.js';
+import { AiLogService } from './aiLogService.js';
 
 export class ChatService {
   constructor(env, siteId = 0) {
     this.env = env;
     this.siteId = siteId;
-    this.embeddingService = new EmbeddingService(env);
+    this.embeddingService = new EmbeddingService(env, siteId);
     this.quizService = new QuizService(env, siteId);
+    this.aiLogService = new AiLogService(env, siteId);
     // Workers AI 사용 (Gemma 3 12B - Google, 다국어 우수)
     this.llmModel = '@cf/google/gemma-3-12b-it';
 
@@ -540,6 +542,7 @@ export class ChatService {
 
     try {
       // Workers AI 사용
+      const startTime = Date.now();
       const result = await this.env.AI.run(this.llmModel, {
         messages,
         max_tokens: this.maxTokens,
@@ -550,6 +553,14 @@ export class ChatService {
       });
 
       if (result && result.response) {
+        // AI 사용 로그
+        this.aiLogService.log({
+          requestType: 'chat',
+          model: this.llmModel,
+          usage: result?.usage || {},
+          latencyMs: Date.now() - startTime
+        }).catch(() => {});
+
         return this.sanitizeResponse(result.response);
       }
 

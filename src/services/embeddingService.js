@@ -6,10 +6,14 @@
  *
  * 사용 모델: @cf/baai/bge-m3 (1024차원, 다국어 지원)
  */
+import { AiLogService } from './aiLogService.js';
+
 export class EmbeddingService {
-  constructor(env) {
+  constructor(env, siteId = 0) {
     this.env = env;
+    this.siteId = siteId;
     this.model = '@cf/baai/bge-m3';
+    this.aiLogService = new AiLogService(env, siteId);
   }
 
   /**
@@ -24,11 +28,20 @@ export class EmbeddingService {
 
     try {
       // Workers AI를 사용하여 임베딩 생성
+      const startTime = Date.now();
       const result = await this.env.AI.run(this.model, {
         text: text
       }, {
         gateway: { id: 'malgn-chatbot' }
       });
+
+      // AI 사용 로그
+      this.aiLogService.log({
+        requestType: 'embedding',
+        model: this.model,
+        usage: result?.usage || { prompt_tokens: Math.ceil(text.length / 4) },
+        latencyMs: Date.now() - startTime
+      }).catch(() => {});
 
       if (result && result.data && result.data.length > 0) {
         return result.data[0];
