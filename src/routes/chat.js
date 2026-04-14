@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { ChatService } from '../services/chatService.js';
+import { AiLogService } from '../services/aiLogService.js';
 
 const chat = new Hono();
 
@@ -224,6 +225,23 @@ chat.post('/stream', async (c) => {
       if (prepared.sessionId && sanitized) {
         c.executionCtx.waitUntil(chatService.saveMessagesToDB(prepared.sessionId, message.trim(), sanitized));
       }
+
+      // AI 사용 로그 (토큰 추정: 한국어 ~2자/토큰, 영어 ~4자/토큰)
+      const promptText = prepared.messages.map(m => m.content).join('');
+      const estimatedPromptTokens = Math.ceil(promptText.length / 3);
+      const estimatedCompletionTokens = Math.ceil(sanitized.length / 3);
+      const aiLogService = new AiLogService(c.env, c.get('siteId'));
+      c.executionCtx.waitUntil(aiLogService.log({
+        sessionId: prepared.sessionId,
+        requestType: 'chat_stream',
+        model: chatService.llmModel,
+        usage: {
+          prompt_tokens: estimatedPromptTokens,
+          completion_tokens: estimatedCompletionTokens,
+          total_tokens: estimatedPromptTokens + estimatedCompletionTokens
+        },
+        latencyMs: Date.now() - llmStart
+      }));
     } catch (error) {
       console.error('Chat stream error:', error.message);
       await stream.writeSSE({ event: 'error', data: JSON.stringify({ message: 'AI 응답 생성 중 오류가 발생했습니다.' }) });
