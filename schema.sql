@@ -127,7 +127,7 @@ CREATE INDEX IF NOT EXISTS idx_quiz_site_id ON TB_QUIZ(site_id);
 CREATE TABLE IF NOT EXISTS TB_AI_LOG (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id INTEGER,
-  content_id INTEGER,
+  lesson_id INTEGER,
   request_type TEXT NOT NULL,
   model TEXT,
   prompt_tokens INTEGER DEFAULT 0,
@@ -146,4 +146,5 @@ CREATE INDEX IF NOT EXISTS idx_ai_log_site_id ON TB_AI_LOG(site_id);
 CREATE INDEX IF NOT EXISTS idx_ai_log_request_type ON TB_AI_LOG(request_type);
 CREATE INDEX IF NOT EXISTS idx_ai_log_session_id ON TB_AI_LOG(session_id);
 CREATE INDEX IF NOT EXISTS idx_ai_log_created_at ON TB_AI_LOG(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_log_lesson_id ON TB_AI_LOG(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_ai_log_site_created ON TB_AI_LOG(site_id, created_at DESC);

@@ -56,7 +56,7 @@ export class AiLogService {
    * @param {Object} params.usage - { prompt_tokens, completion_tokens, total_tokens }
    * @param {number} params.latencyMs - 응답 시간 (ms)
    */
-  async log({ sessionId = null, contentId = null, requestType, model, usage = {}, latencyMs = 0 }) {
+  async log({ sessionId = null, lessonId = null, requestType, model, usage = {}, latencyMs = 0 }) {
     try {
       const promptTokens = usage.prompt_tokens || 0;
       const completionTokens = usage.completion_tokens || 0;
@@ -66,11 +66,11 @@ export class AiLogService {
 
       await this.env.DB
         .prepare(`
-          INSERT INTO TB_AI_LOG (session_id, content_id, request_type, model, prompt_tokens, completion_tokens, total_tokens, neurons, estimated_cost, latency_ms, site_id)
+          INSERT INTO TB_AI_LOG (session_id, lesson_id, request_type, model, prompt_tokens, completion_tokens, total_tokens, neurons, estimated_cost, latency_ms, site_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
-          sessionId, contentId, requestType, model,
+          sessionId, lessonId, requestType, model,
           promptTokens, completionTokens, totalTokens,
           Math.round(neurons * 10000) / 10000,
           Math.round(estimatedCost * 100000000) / 100000000,
@@ -113,7 +113,7 @@ export class AiLogService {
 
     const { results } = await this.env.DB
       .prepare(`
-        SELECT id, session_id, content_id, request_type, model,
+        SELECT id, session_id, lesson_id, request_type, model,
                prompt_tokens, completion_tokens, total_tokens,
                neurons, estimated_cost, latency_ms, created_at
         FROM TB_AI_LOG

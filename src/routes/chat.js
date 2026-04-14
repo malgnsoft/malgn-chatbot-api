@@ -233,6 +233,7 @@ chat.post('/stream', async (c) => {
       const aiLogService = new AiLogService(c.env, c.get('siteId'));
       c.executionCtx.waitUntil(aiLogService.log({
         sessionId: prepared.sessionId,
+        lessonId: prepared.lessonId,
         requestType: 'chat_stream',
         model: chatService.llmModel,
         usage: {

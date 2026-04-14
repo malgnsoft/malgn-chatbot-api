@@ -75,15 +75,16 @@ export class ChatService {
    * @returns {Promise<{contentIds: number[], effectiveSessionId: number}>}
    */
   async getSessionContentIdsAndParent(sessionId) {
-    if (!sessionId) return { contentIds: [], chatContentIds: [], effectiveSessionId: sessionId };
+    if (!sessionId) return { contentIds: [], chatContentIds: [], effectiveSessionId: sessionId, lessonId: null };
 
     try {
       const session = await this.env.DB
-        .prepare('SELECT parent_id, chat_content_ids FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
+        .prepare('SELECT parent_id, lesson_id, chat_content_ids FROM TB_SESSION WHERE id = ? AND site_id = ? AND status = 1')
         .bind(sessionId, this.siteId)
         .first();
 
       const effectiveSessionId = (session && session.parent_id > 0) ? session.parent_id : sessionId;
+      const lessonId = session?.lesson_id || null;
 
       // 자식 세션이면 부모의 chat_content_ids 조회
       let chatContentIdsRaw = session?.chat_content_ids;
@@ -115,11 +116,12 @@ export class ChatService {
       return {
         contentIds,
         chatContentIds: chatContentIds.length > 0 ? chatContentIds : contentIds,
-        effectiveSessionId
+        effectiveSessionId,
+        lessonId
       };
     } catch (error) {
       console.error('Get session content IDs error:', error);
-      return { contentIds: [], chatContentIds: [], effectiveSessionId: sessionId };
+      return { contentIds: [], chatContentIds: [], effectiveSessionId: sessionId, lessonId: null };
     }
   }
 
@@ -280,6 +282,7 @@ export class ChatService {
     const allowedContentIds = contentResult.contentIds;
     const chatContentIds = contentResult.chatContentIds;
     const effectiveSessionId = contentResult.effectiveSessionId;
+    const currentLessonId = contentResult.lessonId;
 
     // 2. 벡터 검색 + 대화 내역 + 퀴즈 컨텍스트를 병렬 실행
     // 채팅은 chatContentIds로 검색, 퀴즈 컨텍스트는 세션 콘텐츠만
@@ -308,7 +311,7 @@ export class ChatService {
     }
 
     // 6. LLM으로 응답 생성 (이전 대화 포함)
-    const response = await this.generateResponse(message, context, chatHistory, { learningData, quizContext: quizContext || '' });
+    const response = await this.generateResponse(message, context, chatHistory, { learningData, quizContext: quizContext || '', sessionId: currentSessionId, lessonId: currentLessonId });
 
     // 7. 참조 문서 정보 구성
     const sources = this.formatSources(searchResults);
@@ -513,7 +516,7 @@ export class ChatService {
    * @param {string} context - RAG 컨텍스트
    * @param {Array} chatHistory - 이전 대화 내역 [{role, content}, ...]
    */
-  async generateResponse(question, context, chatHistory = [], { learningData = {}, quizContext = '' } = {}) {
+  async generateResponse(question, context, chatHistory = [], { learningData = {}, quizContext = '', sessionId = null, lessonId = null } = {}) {
     const systemPrompt = this.buildSystemPrompt({
       context,
       learningGoal: learningData.learningGoal || null,
@@ -555,6 +558,8 @@ export class ChatService {
       if (result && result.response) {
         // AI 사용 로그
         this.aiLogService.log({
+          sessionId,
+          lessonId,
           requestType: 'chat',
           model: this.llmModel,
           usage: result?.usage || {},
@@ -761,6 +766,7 @@ export class ChatService {
     const allowedContentIds = contentResult.contentIds;
     const chatContentIds = contentResult.chatContentIds;
     const effectiveSessionId = contentResult.effectiveSessionId;
+    const currentLessonId = contentResult.lessonId;
     const t1 = Date.now();
     console.log(`[PERF] 1단계 콘텐츠ID+임베딩+학습데이터: ${t1 - t0}ms`);
 
@@ -781,7 +787,7 @@ export class ChatService {
       context = await this.getSessionLearningContext(currentSessionId, allowedContentIds);
 
       if (!context) {
-        return { noContext: true, sessionId: currentSessionId, sources: [] };
+        return { noContext: true, sessionId: currentSessionId, lessonId: currentLessonId, sources: [] };
       }
     } else {
       context = await this.buildContext(searchResults);
@@ -816,7 +822,7 @@ export class ChatService {
 
     const sources = this.formatSources(searchResults);
 
-    return { messages, sources, sessionId: currentSessionId, noContext: false };
+    return { messages, sources, sessionId: currentSessionId, lessonId: currentLessonId, noContext: false };
   }
 
   /**
