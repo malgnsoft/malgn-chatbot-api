@@ -226,10 +226,10 @@ chat.post('/stream', async (c) => {
         c.executionCtx.waitUntil(chatService.saveMessagesToDB(prepared.sessionId, message.trim(), sanitized));
       }
 
-      // AI 사용 로그 (토큰 추정: 한국어 ~2자/토큰, 영어 ~4자/토큰)
+      // AI 사용 로그 (토큰 추정: 한국어+영어 혼합 ~1.85자/토큰, Gateway 실측 기반)
       const promptText = prepared.messages.map(m => m.content).join('');
-      const estimatedPromptTokens = Math.ceil(promptText.length / 3);
-      const estimatedCompletionTokens = Math.ceil(sanitized.length / 3);
+      const estimatedPromptTokens = Math.ceil(promptText.length / 1.85);
+      const estimatedCompletionTokens = Math.ceil(sanitized.length / 1.85);
       const aiLogService = new AiLogService(c.env, c.get('siteId'));
       c.executionCtx.waitUntil(aiLogService.log({
         sessionId: prepared.sessionId,
