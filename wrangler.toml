@@ -9,8 +9,8 @@
 
 name = "malgn-chatbot-api"
 main = "src/index.js"
-compatibility_date = "2024-01-01"
-compatibility_flags = ["nodejs_compat"]
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat_v2"]
 account_id = "d2b8c5524b7259214fa302f1fecb4ad6"
 
 # ============================================
@@ -27,9 +27,13 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[d1_databases]]
-binding = "DB"
+binding = "D1_DB"
 database_name = "malgn-chatbot-db"
 database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "068fcc7ceb624716874da9a9b42f5ab8"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -42,6 +46,20 @@ bucket_name = "malgn-chatbot-files"
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
+
+# Queue
+[[queues.producers]]
+queue = "malgn-chatbot-queue"
+binding = "QUEUE"
+
+[[queues.consumers]]
+queue = "malgn-chatbot-queue"
+max_batch_size = 1
+max_retries = 3
+
+# Cron Trigger (5분마다 비정상 상태 정리)
+[triggers]
+crons = ["*/5 * * * *"]
 
 # ============================================
 # Tenant: user1 (기존 리소스 사용)
@@ -58,9 +76,13 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user1.d1_databases]]
-binding = "DB"
+binding = "D1_DB"
 database_name = "malgn-chatbot-db"
 database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
+
+[[env.user1.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "068fcc7ceb624716874da9a9b42f5ab8"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"
@@ -73,6 +95,13 @@ bucket_name = "malgn-chatbot-files"
 [[env.user1.vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
+
+[[env.user1.queues.producers]]
+queue = "malgn-chatbot-queue"
+binding = "QUEUE"
+
+# consumer는 default Worker에서 처리 (Queue당 consumer 1개 제한)
+# cron도 default Worker에서 처리
 
 # ============================================
 # Tenant: user2
@@ -89,7 +118,7 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user2.d1_databases]]
-binding = "DB"
+binding = "D1_DB"
 database_name = "malgn-chatbot-db-user2"
 database_id = "e18e63b7-a10e-4c41-b40d-bb62d6cc3deb"
 
@@ -104,6 +133,18 @@ bucket_name = "malgn-chatbot-files-user2"
 [[env.user2.vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors-user2"
+
+[[env.user2.queues.producers]]
+queue = "malgn-chatbot-queue-user2"
+binding = "QUEUE"
+
+[[env.user2.queues.consumers]]
+queue = "malgn-chatbot-queue-user2"
+max_batch_size = 1
+max_retries = 3
+
+[env.user2.triggers]
+crons = ["*/5 * * * *"]
 
 # ============================================
 # 새 테넌트 추가 방법
