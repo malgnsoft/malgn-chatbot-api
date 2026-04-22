@@ -113,6 +113,8 @@ class MysqlConnection {
     this.writer = writer;
     this.buffer = new Uint8Array(0);
     this.seqId = 0;
+    // 쿼리 직렬화 뮤텍스 (TCP 소켓은 동시 read 불가)
+    this._lock = Promise.resolve();
   }
 
   static async connect(host, port, user, password, database) {
@@ -312,6 +314,20 @@ class MysqlConnection {
   }
 
   async query(sql) {
+    // 뮤텍스: 이전 쿼리 완료까지 대기 (TCP 소켓은 동시 read 불가)
+    let unlock;
+    const prev = this._lock;
+    this._lock = new Promise(resolve => { unlock = resolve; });
+    await prev;
+
+    try {
+      return await this._queryInternal(sql);
+    } finally {
+      unlock();
+    }
+  }
+
+  async _queryInternal(sql) {
     this.seqId = 0;
 
     // COM_QUERY
