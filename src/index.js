@@ -99,10 +99,10 @@ export default {
 
   // Queue Consumer → 세션 학습데이터/퀴즈 백그라운드 생성
   async queue(batch, env) {
-    // Queue/Cron에서는 Hono 미들웨어가 적용되지 않으므로 DB 래퍼 직접 생성
-    env.DB = createDatabase(env);
-
     for (const msg of batch.messages) {
+      // 매 메시지마다 새 커넥션 생성 (AI 호출 중 idle timeout 방지)
+      env.DB = createDatabase(env);
+
       const { type, sessionId, siteId, contentIds, contents: contentDetails, settings, courseId, courseUserId, lessonId, userId, callbackUrl, callbackData } = msg.body;
 
       if (type !== 'session-generation') {
@@ -238,14 +238,13 @@ export default {
         }
 
         msg.retry();
+        if (env.DB?.cleanup) await env.DB.cleanup();
         return;
       }
 
       msg.ack();
+      if (env.DB?.cleanup) await env.DB.cleanup();
     }
-
-    // MySQL 커넥션 정리
-    if (env.DB?.cleanup) await env.DB.cleanup();
   },
 
   // Cron Trigger → 비정상 상태 정리 (5분마다)
