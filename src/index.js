@@ -212,13 +212,19 @@ export default {
         }
 
       } catch (error) {
-        console.error(`[Queue] Session ${sessionId} failed:`, error.message);
+        console.error(`[Queue] Session ${sessionId} failed:`, error.message, error.stack);
 
-        // 상태: failed
-        await env.DB
-          .prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind('failed', sessionId)
-          .run();
+        // 상태: failed (커넥션 끊겼을 수 있으므로 새 커넥션으로 재시도)
+        try {
+          if (env.DB?.cleanup) await env.DB.cleanup();
+          env.DB = createDatabase(env);
+          await env.DB
+            .prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .bind('failed', sessionId)
+            .run();
+        } catch (dbErr) {
+          console.error(`[Queue] Session ${sessionId} status update also failed:`, dbErr.message);
+        }
 
         // LMS 콜백 (실패)
         if (callbackUrl) {

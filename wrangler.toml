@@ -55,7 +55,8 @@ binding = "QUEUE"
 [[queues.consumers]]
 queue = "malgn-chatbot-queue"
 max_batch_size = 1
-max_retries = 3
+max_retries = 10
+retry_delay = 10
 
 # Cron Trigger (5분마다 비정상 상태 정리)
 [triggers]
