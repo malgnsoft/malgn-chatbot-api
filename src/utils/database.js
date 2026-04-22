@@ -431,6 +431,16 @@ export class MysqlDatabase {
   }
 
   async getConnection() {
+    // 커넥션이 끊겼으면 재연결 (Hyperdrive idle timeout 대응)
+    if (this._connection) {
+      try {
+        // 간단한 ping으로 커넥션 확인
+        await this._connection.query('SELECT 1');
+      } catch {
+        console.log('[MysqlDatabase] Connection lost, reconnecting...');
+        this._connection = null;
+      }
+    }
     if (!this._connection) {
       this._connection = await MysqlConnection.connect(
         this._hyperdrive.host,
