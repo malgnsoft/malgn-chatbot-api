@@ -99,6 +99,9 @@ export default {
 
   // Queue Consumer → 세션 학습데이터/퀴즈 백그라운드 생성
   async queue(batch, env) {
+    // Queue/Cron에서는 Hono 미들웨어가 적용되지 않으므로 DB 래퍼 직접 생성
+    env.DB = createDatabase(env);
+
     for (const msg of batch.messages) {
       const { type, sessionId, siteId, contentIds, contents: contentDetails, settings, courseId, courseUserId, lessonId, userId, callbackUrl, callbackData } = msg.body;
 
@@ -240,22 +243,30 @@ export default {
 
       msg.ack();
     }
+
+    // MySQL 커넥션 정리
+    if (env.DB?.cleanup) await env.DB.cleanup();
   },
 
   // Cron Trigger → 비정상 상태 정리 (5분마다)
   async scheduled(event, env) {
-    // 10분 넘게 processing → failed
+    env.DB = createDatabase(env);
+
+    // 10분 넘게 processing → failed (MySQL 호환 문법)
     const r1 = await env.DB.prepare(`
       UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP
-      WHERE generation_status = 'processing' AND updated_at < datetime('now', '-10 minutes')
+      WHERE generation_status = 'processing' AND updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
     `).run();
     if (r1.meta.changes > 0) console.log(`[Cron] ${r1.meta.changes}개 processing → failed`);
 
     // 30분 넘게 pending → failed
     const r2 = await env.DB.prepare(`
       UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP
-      WHERE generation_status = 'pending' AND updated_at < datetime('now', '-30 minutes')
+      WHERE generation_status = 'pending' AND updated_at < DATE_SUB(NOW(), INTERVAL 30 MINUTE)
     `).run();
     if (r2.meta.changes > 0) console.log(`[Cron] ${r2.meta.changes}개 pending → failed`);
+
+    // MySQL 커넥션 정리
+    if (env.DB?.cleanup) await env.DB.cleanup();
   }
 };
