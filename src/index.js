@@ -243,48 +243,25 @@ export default {
     for (const msg of batch.messages) {
       const { type, sessionId } = msg.body;
 
-      // 세션 생성 → /internal/process-session
-      if (type === 'session-generation') {
-        console.log(`[Queue] Dispatching session ${sessionId} → process-session`);
-        try {
-          const response = await fetch(`${workerUrl}/internal/process-session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
-            body: JSON.stringify(msg.body)
-          });
-          const result = await response.json();
-          if (result.success) {
-            console.log(`[Queue] Session ${sessionId} → ${result.status}`);
-            msg.ack();
-          } else {
-            console.error(`[Queue] Session ${sessionId} → failed: ${result.error}`);
-            msg.retry();
-          }
-        } catch (error) {
-          console.error(`[Queue] Session ${sessionId} → dispatch error: ${error.message}`);
-          msg.retry();
-        }
+      // 엔드포인트 결정
+      let endpoint;
+      if (type === 'session-generation') endpoint = '/internal/process-session';
+      else if (type === 'quiz-generation') endpoint = '/internal/generate-quiz';
 
-      // 퀴즈 생성 → /internal/generate-quiz
-      } else if (type === 'quiz-generation') {
-        console.log(`[Queue] Dispatching quiz for session ${sessionId} → generate-quiz`);
-        try {
-          const response = await fetch(`${workerUrl}/internal/generate-quiz`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
-            body: JSON.stringify(msg.body)
-          });
-          const result = await response.json();
-          console.log(`[Queue] Quiz for session ${sessionId} → ${result.success ? 'done' : result.error}`);
-          msg.ack(); // 퀴즈 실패해도 ack (세션은 이미 completed)
-        } catch (error) {
-          console.error(`[Queue] Quiz dispatch error: ${error.message}`);
-          msg.ack(); // 퀴즈 실패는 치명적이지 않으므로 ack
-        }
+      if (!endpoint) { msg.ack(); continue; }
 
-      } else {
-        msg.ack();
-      }
+      console.log(`[Queue] Dispatching ${type} session=${sessionId} → ${endpoint}`);
+
+      // Fire-and-forget: fetch를 보내고 즉시 ack
+      // 내부 API가 자체적으로 상태 관리 (processing → completed/failed)
+      // Queue consumer가 응답을 기다리지 않으므로 타임아웃 없음
+      fetch(`${workerUrl}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
+        body: JSON.stringify(msg.body)
+      }).catch(err => console.error(`[Queue] Dispatch error: ${err.message}`));
+
+      msg.ack();
     }
   },
 
