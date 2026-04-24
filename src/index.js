@@ -90,8 +90,16 @@ app.post('/internal/process-session', async (c) => {
   console.log(`[Internal] Session ${sessionId} processing started`);
 
   try {
+    // 세션 유효성 확인 (삭제/완료된 세션은 스킵)
+    const session = await c.env.DB.prepare('SELECT status, generation_status FROM TB_SESSION WHERE id = ?')
+      .bind(sessionId).first();
+    if (!session || session.status === -1 || session.generation_status === 'completed') {
+      console.log(`[Internal] Session ${sessionId} skipped (status=${session?.status}, gen=${session?.generation_status})`);
+      return c.json({ success: true, sessionId, status: 'skipped' });
+    }
+
     // 상태: processing
-    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1 AND status = 1')
       .bind('processing', sessionId).run();
 
     // 학습 데이터 생성
@@ -126,7 +134,7 @@ app.post('/internal/process-session', async (c) => {
     }
 
     // 상태: completed
-    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1')
       .bind('completed', sessionId).run();
 
     console.log(`[Internal] Session ${sessionId} completed`);
@@ -156,7 +164,7 @@ app.post('/internal/process-session', async (c) => {
 
     // 상태: failed
     try {
-      await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1')
         .bind('failed', sessionId).run();
     } catch { /* ignore */ }
 
