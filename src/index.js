@@ -99,15 +99,26 @@ export default {
 
   // Queue Consumer → 세션 학습데이터/퀴즈 백그라운드 생성
   async queue(batch, env) {
-    for (const msg of batch.messages) {
-      // 매 메시지마다 새 커넥션 생성 (AI 호출 중 idle timeout 방지)
+    console.log(`[Queue] Batch received: ${batch.messages.length} messages`);
+
+    // Workers 제약: 한 batch에서 여러 메시지 처리 시 I/O context 충돌
+    // 첫 번째 메시지만 처리하고 나머지는 retry
+    if (batch.messages.length > 1) {
+      for (let i = 1; i < batch.messages.length; i++) {
+        batch.messages[i].retry();
+      }
+    }
+
+    const msg = batch.messages[0];
+    {
       env.DB = createDatabase(env);
 
       const { type, sessionId, siteId, contentIds, contents: contentDetails, settings, courseId, courseUserId, lessonId, userId, callbackUrl, callbackData } = msg.body;
+      console.log(`[Queue] Message received: type=${type}, sessionId=${sessionId}`);
 
       if (type !== 'session-generation') {
         msg.ack();
-        continue;
+        return;
       }
 
       // 이미 완료/삭제된 세션이면 스킵
@@ -118,7 +129,7 @@ export default {
 
       if (!session || session.status === -1 || session.generation_status === 'completed') {
         msg.ack();
-        continue;
+        return;
       }
 
       try {
