@@ -252,15 +252,18 @@ export default {
 
       console.log(`[Queue] Dispatching ${type} session=${sessionId} → ${endpoint}`);
 
-      // Fire-and-forget: fetch를 보내고 즉시 ack
-      // 내부 API가 자체적으로 상태 관리 (processing → completed/failed)
-      // Queue consumer가 응답을 기다리지 않으므로 타임아웃 없음
-      fetch(`${workerUrl}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
-        body: JSON.stringify(msg.body)
-      }).catch(err => console.error(`[Queue] Dispatch error: ${err.message}`));
-
+      // fetch 전송 후 응답 대기 — 내부 API가 완료될 때까지 기다림
+      // Queue consumer는 15분 wall clock 제한이므로 충분
+      try {
+        const res = await fetch(`${workerUrl}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
+          body: JSON.stringify(msg.body)
+        });
+        console.log(`[Queue] ${type} session=${sessionId} → ${res.status}`);
+      } catch (err) {
+        console.error(`[Queue] ${type} session=${sessionId} → error: ${err.message}`);
+      }
       msg.ack();
     }
   },
