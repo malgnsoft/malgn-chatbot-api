@@ -639,13 +639,15 @@ sessions.post('/create-with-contents', async (c) => {
             if (!exists) {
               const pgContent = await c.env.DB.prepare('SELECT * FROM TB_CONTENT WHERE id = ?').bind(contentId).first();
               if (pgContent) {
+                const toStr = (v) => v instanceof Date ? v.toISOString() : (v || new Date().toISOString());
                 await c.env.D1_DB.prepare('INSERT OR REPLACE INTO TB_CONTENT (id, content_nm, filename, file_type, file_size, content, lesson_id, site_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                  .bind(pgContent.id, pgContent.content_nm, pgContent.filename || '', pgContent.file_type || 'text', pgContent.file_size || 0, pgContent.content, pgContent.lesson_id, pgContent.site_id, pgContent.status, pgContent.created_at, pgContent.updated_at).run();
+                  .bind(pgContent.id, pgContent.content_nm, pgContent.filename || '', pgContent.file_type || 'text', pgContent.file_size || 0, pgContent.content, pgContent.lesson_id, pgContent.site_id, pgContent.status, toStr(pgContent.created_at), toStr(pgContent.updated_at)).run();
               }
             }
           }
+          console.log(`[CreateWithContents] D1 sync done: session=${sessionId}, contents=${contentIds.join(',')}`);
         } catch (d1Err) {
-          console.error('[CreateWithContents] D1 sync error:', d1Err.message);
+          console.error('[CreateWithContents] D1 sync error:', d1Err.message, d1Err.stack);
         }
       }
 
