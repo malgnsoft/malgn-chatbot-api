@@ -28,12 +28,13 @@ const app = new Hono();
 // Global middleware
 app.use('*', logger());
 
-// DB 미들웨어: HYPERDRIVE → MySQL 래퍼, 없으면 D1 fallback
+// DB 미들웨어: HYPERDRIVE → PG 래퍼, 없으면 D1 fallback
 app.use('*', async (c, next) => {
   c.env.DB = createDatabase(c.env);
   await next();
-  // MySQL 커넥션 정리
-  if (c.env.DB?.cleanup) {
+  // 내부 API는 waitUntil 백그라운드에서 DB를 사용하므로 cleanup 하지 않음
+  // (Workers가 요청 종료 시 자동 정리)
+  if (!c.req.path.startsWith('/internal/') && c.env.DB?.cleanup) {
     c.executionCtx.waitUntil(c.env.DB.cleanup());
   }
 });
