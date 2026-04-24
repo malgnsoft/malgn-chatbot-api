@@ -86,21 +86,25 @@ app.post('/internal/process-session', async (c) => {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
 
-  const { sessionId, siteId, contentIds, contents: contentDetails, settings, callbackUrl, callbackData, lessonId } = await c.req.json();
-  console.log(`[Internal] Session ${sessionId} processing started`);
+  const body = await c.req.json();
+  const { sessionId, siteId, contentIds, contents: contentDetails, settings, callbackUrl, callbackData, lessonId } = body;
+  console.log(`[Internal] Session ${sessionId} accepted`);
 
-  try {
-    // 세션 유효성 확인 (삭제/완료된 세션은 스킵)
-    const session = await c.env.DB.prepare('SELECT status, generation_status FROM TB_SESSION WHERE id = ?')
-      .bind(sessionId).first();
-    if (!session || session.status === -1 || session.generation_status === 'completed') {
-      console.log(`[Internal] Session ${sessionId} skipped (status=${session?.status}, gen=${session?.generation_status})`);
-      return c.json({ success: true, sessionId, status: 'skipped' });
-    }
+  // 즉시 202 응답 + waitUntil으로 백그라운드 처리
+  // Queue consumer가 블로킹되지 않아 다음 메시지 처리 가능
+  c.executionCtx.waitUntil((async () => {
+    try {
+      // 세션 유효성 확인
+      const session = await c.env.DB.prepare('SELECT status, generation_status FROM TB_SESSION WHERE id = ?')
+        .bind(sessionId).first();
+      if (!session || session.status === -1 || session.generation_status === 'completed') {
+        console.log(`[Internal] Session ${sessionId} skipped`);
+        return;
+      }
 
-    // 상태: processing
-    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1 AND status = 1')
-      .bind('processing', sessionId).run();
+      // 상태: processing
+      await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1')
+        .bind('processing', sessionId).run();
 
     // ── 1단계: 학습 데이터 생성 (~8초) ──
     const learningService = new LearningService(c.env, siteId || 0);
@@ -136,34 +140,30 @@ app.post('/internal/process-session', async (c) => {
     const oxCount = settings.oxCount ?? 2;
 
     if (choiceCount + oxCount > 0 && c.env.QUEUE) {
-      c.executionCtx.waitUntil(c.env.QUEUE.send({
+      await c.env.QUEUE.send({
         type: 'quiz-generation',
         sessionId, siteId, contentIds, settings, lessonId
-      }).catch(err => console.error(`[Internal] Quiz queue error for session ${sessionId}:`, err.message)));
+      }).catch(err => console.error(`[Internal] Quiz queue error for session ${sessionId}:`, err.message));
     }
-
-    return c.json({ success: true, sessionId, status: 'completed' });
 
   } catch (error) {
     console.error(`[Internal] Session ${sessionId} failed:`, error.message);
-
-    // 상태: failed
     try {
       await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1')
         .bind('failed', sessionId).run();
     } catch { /* ignore */ }
 
-    // LMS 콜백 (실패)
     if (callbackUrl) {
-      c.executionCtx.waitUntil(fetch(callbackUrl, {
+      fetch(callbackUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, siteId, generationStatus: 'failed', error: error.message, callbackData })
-      }).catch(() => {}));
+      }).catch(() => {});
     }
-
-    return c.json({ success: false, error: error.message }, 500);
   }
+  })());
+
+  return c.json({ success: true, sessionId, status: 'accepted' }, 202);
 });
 
 // 내부 API: 퀴즈 생성 (2단계, 백그라운드)
@@ -173,41 +173,40 @@ app.post('/internal/generate-quiz', async (c) => {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
 
-  const { sessionId, siteId, contentIds, settings, lessonId } = await c.req.json();
-  console.log(`[Internal/Quiz] Session ${sessionId} quiz generation started`);
+  const body = await c.req.json();
+  const { sessionId, siteId, contentIds, settings, lessonId } = body;
 
-  try {
-    const quizService = new QuizService(c.env, siteId || 0);
-    quizService.setContext(sessionId, lessonId);
-    const choiceCount = settings.choiceCount ?? 3;
-    const oxCount = settings.oxCount ?? 2;
+  c.executionCtx.waitUntil((async () => {
+    try {
+      console.log(`[Internal/Quiz] Session ${sessionId} quiz generation started`);
+      const quizService = new QuizService(c.env, siteId || 0);
+      quizService.setContext(sessionId, lessonId);
 
-    const contentTexts = [];
-    for (const contentId of contentIds) {
-      const content = await c.env.DB
-        .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
-        .bind(contentId, siteId || 0).first();
-      if (content?.content?.trim().length >= 100) {
-        contentTexts.push(content.content);
+      const contentTexts = [];
+      for (const contentId of contentIds) {
+        const content = await c.env.DB
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+          .bind(contentId, siteId || 0).first();
+        if (content?.content?.trim().length >= 100) {
+          contentTexts.push(content.content);
+        }
       }
+
+      const merged = contentTexts.join('\n\n---\n\n');
+      if (merged.trim().length >= 100) {
+        await quizService.generateQuizzesForContent(
+          contentIds[0], merged,
+          { choiceCount: settings.choiceCount ?? 3, oxCount: settings.oxCount ?? 2, difficulty: settings.quizDifficulty || 'normal' },
+          sessionId
+        );
+      }
+      console.log(`[Internal/Quiz] Session ${sessionId} quiz generation completed`);
+    } catch (error) {
+      console.error(`[Internal/Quiz] Session ${sessionId} quiz failed:`, error.message);
     }
+  })());
 
-    const merged = contentTexts.join('\n\n---\n\n');
-    if (merged.trim().length >= 100) {
-      await quizService.generateQuizzesForContent(
-        contentIds[0], merged,
-        { choiceCount, oxCount, difficulty: settings.quizDifficulty || 'normal' },
-        sessionId
-      );
-    }
-
-    console.log(`[Internal/Quiz] Session ${sessionId} quiz generation completed`);
-    return c.json({ success: true, sessionId });
-
-  } catch (error) {
-    console.error(`[Internal/Quiz] Session ${sessionId} quiz failed:`, error.message);
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  return c.json({ success: true, sessionId, status: 'accepted' }, 202);
 });
 
 // Error handling
