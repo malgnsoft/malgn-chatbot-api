@@ -102,42 +102,16 @@ app.post('/internal/process-session', async (c) => {
     await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1 AND status = 1')
       .bind('processing', sessionId).run();
 
-    // 학습 데이터 생성
+    // ── 1단계: 학습 데이터 생성 (~8초) ──
     const learningService = new LearningService(c.env, siteId || 0);
     learningService.setContext(sessionId, lessonId);
     const learningData = await learningService.generateAndStoreLearningData(sessionId, contentIds, settings);
 
-    // 퀴즈 생성
-    const quizService = new QuizService(c.env, siteId || 0);
-    quizService.setContext(sessionId, lessonId);
-    const choiceCount = settings.choiceCount ?? 3;
-    const oxCount = settings.oxCount ?? 2;
-
-    if (choiceCount + oxCount > 0) {
-      const contentTexts = [];
-      for (const contentId of contentIds) {
-        const content = await c.env.DB
-          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
-          .bind(contentId, siteId || 0).first();
-        if (content?.content?.trim().length >= 100) {
-          contentTexts.push(content.content);
-        }
-      }
-      const merged = contentTexts.join('\n\n---\n\n');
-      if (merged.trim().length >= 100) {
-        await quizService.generateQuizzesForContent(
-          contentIds[0], merged,
-          { choiceCount, oxCount, difficulty: settings.quizDifficulty || 'normal' },
-          sessionId
-        );
-      }
-    }
-
-    // 상태: completed
+    // 즉시 completed (학습 데이터 생성 완료 = 세션 사용 가능)
     await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 1')
       .bind('completed', sessionId).run();
 
-    console.log(`[Internal] Session ${sessionId} completed`);
+    console.log(`[Internal] Session ${sessionId} completed (learning done)`);
 
     // LMS 콜백 (성공)
     if (callbackUrl) {
@@ -155,6 +129,17 @@ app.post('/internal/process-session', async (c) => {
           callbackData
         })
       }).catch(() => {}));
+    }
+
+    // ── 2단계: 퀴즈 생성 (Queue에 별도 메시지로 전송) ──
+    const choiceCount = settings.choiceCount ?? 3;
+    const oxCount = settings.oxCount ?? 2;
+
+    if (choiceCount + oxCount > 0 && c.env.QUEUE) {
+      c.executionCtx.waitUntil(c.env.QUEUE.send({
+        type: 'quiz-generation',
+        sessionId, siteId, contentIds, settings, lessonId
+      }).catch(err => console.error(`[Internal] Quiz queue error for session ${sessionId}:`, err.message)));
     }
 
     return c.json({ success: true, sessionId, status: 'completed' });
@@ -177,6 +162,50 @@ app.post('/internal/process-session', async (c) => {
       }).catch(() => {}));
     }
 
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 내부 API: 퀴즈 생성 (2단계, 백그라운드)
+app.post('/internal/generate-quiz', async (c) => {
+  const internalKey = c.req.header('X-Internal-Key');
+  if (internalKey !== c.env.API_KEY) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  const { sessionId, siteId, contentIds, settings, lessonId } = await c.req.json();
+  console.log(`[Internal/Quiz] Session ${sessionId} quiz generation started`);
+
+  try {
+    const quizService = new QuizService(c.env, siteId || 0);
+    quizService.setContext(sessionId, lessonId);
+    const choiceCount = settings.choiceCount ?? 3;
+    const oxCount = settings.oxCount ?? 2;
+
+    const contentTexts = [];
+    for (const contentId of contentIds) {
+      const content = await c.env.DB
+        .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+        .bind(contentId, siteId || 0).first();
+      if (content?.content?.trim().length >= 100) {
+        contentTexts.push(content.content);
+      }
+    }
+
+    const merged = contentTexts.join('\n\n---\n\n');
+    if (merged.trim().length >= 100) {
+      await quizService.generateQuizzesForContent(
+        contentIds[0], merged,
+        { choiceCount, oxCount, difficulty: settings.quizDifficulty || 'normal' },
+        sessionId
+      );
+    }
+
+    console.log(`[Internal/Quiz] Session ${sessionId} quiz generation completed`);
+    return c.json({ success: true, sessionId });
+
+  } catch (error) {
+    console.error(`[Internal/Quiz] Session ${sessionId} quiz failed:`, error.message);
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -214,36 +243,47 @@ export default {
     for (const msg of batch.messages) {
       const { type, sessionId } = msg.body;
 
-      if (type !== 'session-generation') {
-        msg.ack();
-        continue;
-      }
-
-      console.log(`[Queue] Dispatching session ${sessionId} → ${workerUrl}/internal/process-session`);
-
-      try {
-        const response = await fetch(`${workerUrl}/internal/process-session`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Internal-Key': env.API_KEY,
-            'X-Site-Id': String(msg.body.siteId || 0)
-          },
-          body: JSON.stringify(msg.body)
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-          console.log(`[Queue] Session ${sessionId} → completed`);
-          msg.ack();
-        } else {
-          console.error(`[Queue] Session ${sessionId} → failed: ${result.error}`);
+      // 세션 생성 → /internal/process-session
+      if (type === 'session-generation') {
+        console.log(`[Queue] Dispatching session ${sessionId} → process-session`);
+        try {
+          const response = await fetch(`${workerUrl}/internal/process-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
+            body: JSON.stringify(msg.body)
+          });
+          const result = await response.json();
+          if (result.success) {
+            console.log(`[Queue] Session ${sessionId} → ${result.status}`);
+            msg.ack();
+          } else {
+            console.error(`[Queue] Session ${sessionId} → failed: ${result.error}`);
+            msg.retry();
+          }
+        } catch (error) {
+          console.error(`[Queue] Session ${sessionId} → dispatch error: ${error.message}`);
           msg.retry();
         }
-      } catch (error) {
-        console.error(`[Queue] Session ${sessionId} → dispatch error: ${error.message}`);
-        msg.retry();
+
+      // 퀴즈 생성 → /internal/generate-quiz
+      } else if (type === 'quiz-generation') {
+        console.log(`[Queue] Dispatching quiz for session ${sessionId} → generate-quiz`);
+        try {
+          const response = await fetch(`${workerUrl}/internal/generate-quiz`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.API_KEY, 'X-Site-Id': String(msg.body.siteId || 0) },
+            body: JSON.stringify(msg.body)
+          });
+          const result = await response.json();
+          console.log(`[Queue] Quiz for session ${sessionId} → ${result.success ? 'done' : result.error}`);
+          msg.ack(); // 퀴즈 실패해도 ack (세션은 이미 completed)
+        } catch (error) {
+          console.error(`[Queue] Quiz dispatch error: ${error.message}`);
+          msg.ack(); // 퀴즈 실패는 치명적이지 않으므로 ack
+        }
+
+      } else {
+        msg.ack();
       }
     }
   },
