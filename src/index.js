@@ -72,6 +72,107 @@ app.get('/health', (c) => {
 app.get('/openapi.json', (c) => c.json(openApiSpec));
 app.get('/docs', swaggerUI({ url: '/openapi.json' }));
 
+// ============================================
+// 내부 API: Queue → self-fetch로 세션 처리
+// (별도 HTTP 컨텍스트에서 실행 → I/O 충돌 없음)
+// ============================================
+import { LearningService } from './services/learningService.js';
+import { QuizService } from './services/quizService.js';
+
+app.post('/internal/process-session', async (c) => {
+  // 내부 키 검증
+  const internalKey = c.req.header('X-Internal-Key');
+  if (internalKey !== c.env.API_KEY) {
+    return c.json({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  const { sessionId, siteId, contentIds, contents: contentDetails, settings, callbackUrl, callbackData, lessonId } = await c.req.json();
+  console.log(`[Internal] Session ${sessionId} processing started`);
+
+  try {
+    // 상태: processing
+    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind('processing', sessionId).run();
+
+    // 학습 데이터 생성
+    const learningService = new LearningService(c.env, siteId || 0);
+    learningService.setContext(sessionId, lessonId);
+    const learningData = await learningService.generateAndStoreLearningData(sessionId, contentIds, settings);
+
+    // 퀴즈 생성
+    const quizService = new QuizService(c.env, siteId || 0);
+    quizService.setContext(sessionId, lessonId);
+    const choiceCount = settings.choiceCount ?? 3;
+    const oxCount = settings.oxCount ?? 2;
+
+    if (choiceCount + oxCount > 0) {
+      const contentTexts = [];
+      for (const contentId of contentIds) {
+        const content = await c.env.DB
+          .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+          .bind(contentId, siteId || 0).first();
+        if (content?.content?.trim().length >= 100) {
+          contentTexts.push(content.content);
+        }
+      }
+      const merged = contentTexts.join('\n\n---\n\n');
+      if (merged.trim().length >= 100) {
+        await quizService.generateQuizzesForContent(
+          contentIds[0], merged,
+          { choiceCount, oxCount, difficulty: settings.quizDifficulty || 'normal' },
+          sessionId
+        );
+      }
+    }
+
+    // 상태: completed
+    await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind('completed', sessionId).run();
+
+    console.log(`[Internal] Session ${sessionId} completed`);
+
+    // LMS 콜백 (성공)
+    if (callbackUrl) {
+      const sessionData = await c.env.DB.prepare('SELECT * FROM TB_SESSION WHERE id = ?').bind(sessionId).first();
+      c.executionCtx.waitUntil(fetch(callbackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId, siteId, generationStatus: 'completed',
+          title: learningData.sessionNm || sessionData?.session_nm || '새 대화',
+          courseId: sessionData?.course_id, courseUserId: sessionData?.course_user_id,
+          lessonId: sessionData?.lesson_id, userId: sessionData?.user_id,
+          contents: contentDetails || contentIds.map(id => ({ id })),
+          learning: { goal: learningData.learningGoal, summary: learningData.learningSummary, recommendedQuestions: learningData.recommendedQuestions },
+          callbackData
+        })
+      }).catch(() => {}));
+    }
+
+    return c.json({ success: true, sessionId, status: 'completed' });
+
+  } catch (error) {
+    console.error(`[Internal] Session ${sessionId} failed:`, error.message);
+
+    // 상태: failed
+    try {
+      await c.env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .bind('failed', sessionId).run();
+    } catch { /* ignore */ }
+
+    // LMS 콜백 (실패)
+    if (callbackUrl) {
+      c.executionCtx.waitUntil(fetch(callbackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, siteId, generationStatus: 'failed', error: error.message, callbackData })
+      }).catch(() => {}));
+    }
+
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // Error handling
 app.onError(errorHandler);
 
@@ -87,180 +188,55 @@ app.notFound((c) => {
   }, 404);
 });
 
-// ============================================
-// Queue Consumer + Cron Trigger
-// ============================================
-import { LearningService } from './services/learningService.js';
-import { QuizService } from './services/quizService.js';
-
 export default {
   // HTTP 요청 → Hono
   fetch: app.fetch,
 
-  // Queue Consumer → 세션 학습데이터/퀴즈 백그라운드 생성
+  // Queue Consumer → self-fetch 디스패처
+  // 직접 AI/DB 작업을 하지 않고, 자신의 /internal/process-session 엔드포인트를 호출합니다.
+  // 각 메시지가 별도 HTTP 요청 컨텍스트에서 실행되므로 I/O 충돌이 발생하지 않습니다.
   async queue(batch, env) {
     console.log(`[Queue] Batch received: ${batch.messages.length} messages`);
 
-    // Workers 제약: 한 batch에서 여러 메시지 처리 시 I/O context 충돌
-    // 첫 번째 메시지만 처리하고 나머지는 retry
-    if (batch.messages.length > 1) {
-      for (let i = 1; i < batch.messages.length; i++) {
-        batch.messages[i].retry();
-      }
-    }
+    // Worker의 자기 자신 URL 결정
+    const workerUrl = env.ENVIRONMENT === 'production'
+      ? `https://malgn-chatbot-api-${env.TENANT_ID}.malgnsoft.workers.dev`
+      : 'https://malgn-chatbot-api.malgnsoft.workers.dev';
 
-    const msg = batch.messages[0];
-    {
-      env.DB = createDatabase(env);
-
-      const { type, sessionId, siteId, contentIds, contents: contentDetails, settings, courseId, courseUserId, lessonId, userId, callbackUrl, callbackData } = msg.body;
-      console.log(`[Queue] Message received: type=${type}, sessionId=${sessionId}`);
+    for (const msg of batch.messages) {
+      const { type, sessionId } = msg.body;
 
       if (type !== 'session-generation') {
         msg.ack();
-        return;
+        continue;
       }
 
-      // 이미 완료/삭제된 세션이면 스킵
-      const session = await env.DB
-        .prepare('SELECT generation_status, status FROM TB_SESSION WHERE id = ?')
-        .bind(sessionId)
-        .first();
-
-      if (!session || session.status === -1 || session.generation_status === 'completed') {
-        msg.ack();
-        return;
-      }
+      console.log(`[Queue] Dispatching session ${sessionId} → ${workerUrl}/internal/process-session`);
 
       try {
-        // 상태: processing
-        await env.DB
-          .prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind('processing', sessionId)
-          .run();
+        const response = await fetch(`${workerUrl}/internal/process-session`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Key': env.API_KEY,
+            'X-Site-Id': String(msg.body.siteId || 0)
+          },
+          body: JSON.stringify(msg.body)
+        });
 
-        console.log(`[Queue] Session ${sessionId} processing started`);
+        const result = await response.json();
 
-        // 학습 데이터 생성
-        const learningService = new LearningService(env, siteId || 0);
-        const learningData = await learningService.generateAndStoreLearningData(sessionId, contentIds, settings);
-
-        // 퀴즈 생성
-        const quizService = new QuizService(env, siteId || 0);
-        const choiceCount = settings.choiceCount ?? 3;
-        const oxCount = settings.oxCount ?? 2;
-
-        if (choiceCount + oxCount > 0) {
-          const contentTexts = [];
-          for (const contentId of contentIds) {
-            const content = await env.DB
-              .prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
-              .bind(contentId, siteId || 0)
-              .first();
-            if (content?.content?.trim().length >= 100) {
-              contentTexts.push(content.content);
-            }
-          }
-          const merged = contentTexts.join('\n\n---\n\n');
-          if (merged.trim().length >= 100) {
-            await quizService.generateQuizzesForContent(
-              contentIds[0], merged,
-              { choiceCount, oxCount, difficulty: settings.quizDifficulty || 'normal' },
-              sessionId
-            );
-          }
+        if (result.success) {
+          console.log(`[Queue] Session ${sessionId} → completed`);
+          msg.ack();
+        } else {
+          console.error(`[Queue] Session ${sessionId} → failed: ${result.error}`);
+          msg.retry();
         }
-
-        // 상태: completed
-        await env.DB
-          .prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind('completed', sessionId)
-          .run();
-
-        console.log(`[Queue] Session ${sessionId} completed`);
-
-        // LMS 콜백 (성공) - 동기 응답(201)과 동일 수준의 데이터 전송
-        if (callbackUrl) {
-          // 세션 조회 (설정값 포함)
-          const sessionData = await env.DB
-            .prepare('SELECT * FROM TB_SESSION WHERE id = ?')
-            .bind(sessionId)
-            .first();
-
-          await fetch(callbackUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId,
-              siteId,
-              generationStatus: 'completed',
-              title: learningData.sessionNm || sessionData?.session_nm || '새 대화',
-              courseId: sessionData?.course_id || null,
-              courseUserId: sessionData?.course_user_id || null,
-              lessonId: sessionData?.lesson_id || null,
-              userId: sessionData?.user_id || null,
-              contents: contentDetails || contentIds.map(id => ({ id })),
-              settings: {
-                persona: sessionData?.persona,
-                temperature: sessionData?.temperature,
-                topP: sessionData?.top_p,
-                maxTokens: sessionData?.max_tokens,
-                summaryCount: sessionData?.summary_count,
-                recommendCount: sessionData?.recommend_count,
-                choiceCount: sessionData?.choice_count,
-                oxCount: sessionData?.ox_count,
-                quizDifficulty: sessionData?.quiz_difficulty || 'normal'
-              },
-              learning: {
-                goal: learningData.learningGoal,
-                summary: learningData.learningSummary,
-                recommendedQuestions: learningData.recommendedQuestions
-              },
-              quiz: { choiceCount, oxCount },
-              callbackData
-            })
-          });
-        }
-
       } catch (error) {
-        console.error(`[Queue] Session ${sessionId} failed:`, error.message, error.stack);
-
-        // 상태: failed (커넥션 끊겼을 수 있으므로 새 커넥션으로 재시도)
-        try {
-          if (env.DB?.cleanup) await env.DB.cleanup();
-          env.DB = createDatabase(env);
-          await env.DB
-            .prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-            .bind('failed', sessionId)
-            .run();
-        } catch (dbErr) {
-          console.error(`[Queue] Session ${sessionId} status update also failed:`, dbErr.message);
-        }
-
-        // LMS 콜백 (실패)
-        if (callbackUrl) {
-          await fetch(callbackUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId,
-              siteId,
-              generationStatus: 'failed',
-              error: error.message,
-              lessonId: lessonId || null,
-              contents: contentDetails || contentIds.map(id => ({ id })),
-              callbackData
-            })
-          }).catch(() => {});
-        }
-
+        console.error(`[Queue] Session ${sessionId} → dispatch error: ${error.message}`);
         msg.retry();
-        if (env.DB?.cleanup) await env.DB.cleanup();
-        return;
       }
-
-      msg.ack();
-      if (env.DB?.cleanup) await env.DB.cleanup();
     }
   },
 
