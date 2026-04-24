@@ -30,11 +30,27 @@ sessions.get('/', async (c) => {
     const page = Math.max(1, parseInt(c.req.query('page') || '1'));
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '50')));
     const offset = (page - 1) * limit;
+    const generationStatus = c.req.query('generationStatus') || null;
+
+    // 동적 WHERE 절 구성 (콤마 구분 복수 값 지원: pending,processing)
+    const validStatuses = ['none', 'pending', 'processing', 'completed', 'failed'];
+    let statusFilter = '';
+    const binds = [siteId];
+    if (generationStatus) {
+      const statuses = generationStatus.split(',').map(s => s.trim()).filter(s => validStatuses.includes(s));
+      if (statuses.length === 1) {
+        statusFilter = ' AND s.generation_status = ?';
+        binds.push(statuses[0]);
+      } else if (statuses.length > 1) {
+        statusFilter = ` AND s.generation_status IN (${statuses.map(() => '?').join(',')})`;
+        binds.push(...statuses);
+      }
+    }
 
     // 전체 개수 조회 (부모 세션만, status = 1)
     const countResult = await c.env.DB
-      .prepare('SELECT COUNT(*) as total FROM TB_SESSION WHERE status = 1 AND parent_id = 0 AND site_id = ?')
-      .bind(siteId)
+      .prepare(`SELECT COUNT(*) as total FROM TB_SESSION s WHERE s.status = 1 AND s.parent_id = 0 AND s.site_id = ?${statusFilter}`)
+      .bind(...binds)
       .first();
     const total = countResult?.total || 0;
 
@@ -44,17 +60,24 @@ sessions.get('/', async (c) => {
         SELECT
           s.id,
           s.session_nm,
+          s.lesson_id,
+          s.course_id,
+          s.user_id,
+          s.generation_status,
+          s.learning_goal IS NOT NULL as hasLearningData,
           s.created_at,
           s.updated_at,
           (SELECT content FROM TB_MESSAGE WHERE session_id = s.id AND status = 1 ORDER BY created_at ASC LIMIT 1) as firstMessage,
           (SELECT content FROM TB_MESSAGE WHERE session_id = s.id AND status = 1 ORDER BY created_at DESC LIMIT 1) as lastMessage,
-          (SELECT COUNT(*) FROM TB_MESSAGE WHERE session_id = s.id AND status = 1) as messageCount
+          (SELECT COUNT(*) FROM TB_MESSAGE WHERE session_id = s.id AND status = 1) as messageCount,
+          (SELECT COUNT(*) FROM TB_SESSION_CONTENT WHERE session_id = s.id AND status = 1) as contentCount,
+          (SELECT COUNT(*) FROM TB_SESSION WHERE parent_id = s.id AND status = 1) as childCount
         FROM TB_SESSION s
-        WHERE s.status = 1 AND s.parent_id = 0 AND s.site_id = ?
+        WHERE s.status = 1 AND s.parent_id = 0 AND s.site_id = ?${statusFilter}
         ORDER BY s.updated_at DESC
         LIMIT ? OFFSET ?
       `)
-      .bind(siteId, limit, offset)
+      .bind(...binds, limit, offset)
       .all();
 
     // 제목: DB 저장된 제목 우선, 없으면 첫 메시지 기반 생성
@@ -68,6 +91,13 @@ sessions.get('/', async (c) => {
       return {
         id: session.id,
         title,
+        lessonId: session.lesson_id,
+        courseId: session.course_id,
+        userId: session.user_id,
+        generationStatus: session.generation_status || 'none',
+        hasLearningData: !!session.hasLearningData,
+        contentCount: session.contentCount || 0,
+        childCount: session.childCount || 0,
         lastMessage: session.lastMessage
           ? session.lastMessage.substring(0, 50) + (session.lastMessage.length > 50 ? '...' : '')
           : null,
@@ -330,7 +360,7 @@ sessions.post('/', async (c) => {
       }, 400);
     }
 
-    // 세션 생성 (AI 설정 포함, 미전달 시 DB DEFAULT 사용)
+    // 세션 생성 (AI 설정 포함, 미전달 시 DB DEFAULT 사용) — 동기 처리만 지원
     const sessionNm = body.sessionNm || body.session_nm || null;
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
@@ -466,7 +496,8 @@ sessions.post('/', async (c) => {
       success: false,
       error: {
         code: 'INTERNAL_ERROR',
-        message: '세션 생성 중 오류가 발생했습니다.'
+        message: '세션 생성 중 오류가 발생했습니다.',
+        detail: error.message
       }
     }, 500);
   }
@@ -484,7 +515,9 @@ sessions.post('/', async (c) => {
  *     { type: "text", name: "제목", content: "본문 텍스트" }
  *   ],
  *   settings: { persona, temperature, topP, maxTokens, summaryCount, recommendCount, choiceCount, oxCount, quizDifficulty },
- *   courseId, courseUserId, lessonId, userId, sessionNm
+ *   courseId, courseUserId, lessonId, userId, sessionNm,
+ *   callbackUrl: "https://lms.example.com/api/callback" (선택 - 있으면 Queue 비동기 처리),
+ *   callbackData: { ... } (선택 - 콜백 시 그대로 반환)
  * }
  */
 sessions.post('/create-with-contents', async (c) => {
@@ -492,7 +525,7 @@ sessions.post('/create-with-contents', async (c) => {
     const body = await c.req.json();
     console.log('[CreateWithContents] body:', JSON.stringify(body));
 
-    const contents = body.contents || [];
+    const contents = typeof body.contents === 'string' ? JSON.parse(body.contents) : (body.contents || []);
     const userId = (body.userId ?? body.user_id) != null ? parseInt(body.userId ?? body.user_id, 10) : null;
     const courseId = body.courseId || body.course_id || null;
     const courseUserId = body.courseUserId || body.course_user_id || null;
@@ -500,6 +533,8 @@ sessions.post('/create-with-contents', async (c) => {
     const sessionNm = body.sessionNm || body.session_nm || null;
     const chatContentIds = Array.isArray(body.chatContentIds) ? body.chatContentIds : (Array.isArray(body.chat_content_ids) ? body.chat_content_ids : null);
     const settings = typeof body.settings === 'string' ? JSON.parse(body.settings) : (body.settings || {});
+    const callbackUrl = body.callbackUrl || null;
+    const callbackData = body.callbackData || null;
 
     if (!contents || contents.length === 0) {
       return c.json({
@@ -513,23 +548,27 @@ sessions.post('/create-with-contents', async (c) => {
     // 1단계: 콘텐츠 등록 (병렬)
     const contentService = new ContentService(c.env, c.executionCtx, siteId);
     const contentResults = await Promise.all(
-      contents.map(async (item) => {
+      contents.map(async (item, index) => {
         try {
-          if (item.type === 'link' && item.url) {
-            return await contentService.uploadLink(item.title || item.name || item.url, item.url, lessonId);
+          let result;
+          if ((item.type === 'link' || item.type === 'link-subtitle' || item.type === 'link-file') && item.url) {
+            result = await contentService.uploadLink(item.title || item.name || item.url, item.url, lessonId);
           } else if (item.type === 'text' && item.content) {
-            return await contentService.uploadText(item.title || item.name || '텍스트', item.content, lessonId);
+            result = await contentService.uploadText(item.title || item.name || '텍스트', item.content, lessonId);
           } else {
-            return { error: `지원하지 않는 콘텐츠 타입: ${item.type}` };
+            return { index, inputName: item.title || item.name || item.url, inputType: item.type, error: `지원하지 않는 콘텐츠 타입: ${item.type}` };
           }
+          // 요청 원본 정보 + 생성 결과 병합
+          return { ...result, index, inputName: item.title || item.name || null, inputType: item.type, inputUrl: item.url || null };
         } catch (err) {
-          return { error: err.message, title: item.title || item.name || item.url };
+          return { index, inputName: item.title || item.name || item.url, inputType: item.type, inputUrl: item.url || null, error: err.message };
         }
       })
     );
 
-    // 성공한 콘텐츠 ID 수집
-    const contentIds = contentResults.filter(r => r.id).map(r => r.id);
+    // 성공/실패 분리
+    const successContents = contentResults.filter(r => r.id);
+    const contentIds = successContents.map(r => r.id);
     const errors = contentResults.filter(r => r.error);
 
     if (contentIds.length === 0) {
@@ -544,11 +583,12 @@ sessions.post('/create-with-contents', async (c) => {
     }
 
     // 2단계: 세션 생성
+    const useQueue = !!callbackUrl && !!c.env.QUEUE;
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
-        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids, site_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO TB_SESSION (parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids, generation_status, site_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         0,
@@ -567,6 +607,7 @@ sessions.post('/create-with-contents', async (c) => {
         settings.oxCount ?? 2,
         settings.quizDifficulty || 'normal',
         chatContentIds ? JSON.stringify(chatContentIds) : null,
+        useQueue ? 'pending' : 'none',
         siteId
       )
       .run();
@@ -581,7 +622,79 @@ sessions.post('/create-with-contents', async (c) => {
         .run();
     }
 
-    // 3단계: 학습 데이터 + 퀴즈 생성 (병렬)
+    // ── 3단계: Queue(비동기) 또는 동기 처리 분기 ──
+    if (useQueue) {
+      // D1에 세션 + 콘텐츠 동기화 (Queue consumer가 D1을 사용하므로)
+      if (c.env.D1_DB) {
+        try {
+          await c.env.D1_DB.prepare(`INSERT OR REPLACE INTO TB_SESSION (id, parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids, generation_status, site_id, status, created_at, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+            .bind(sessionId, courseId, courseUserId, lessonId, userId, sessionNm, settings.persona || defaultPersona, settings.temperature ?? 0.3, settings.topP ?? 0.3, settings.maxTokens ?? 1024, settings.summaryCount ?? 3, settings.recommendCount ?? 3, settings.choiceCount ?? 3, settings.oxCount ?? 2, settings.quizDifficulty || 'normal', chatContentIds ? JSON.stringify(chatContentIds) : null, siteId).run();
+          for (const contentId of contentIds) {
+            await c.env.D1_DB.prepare('INSERT OR IGNORE INTO TB_SESSION_CONTENT (session_id, content_id, site_id, status) VALUES (?, ?, ?, 1)')
+              .bind(sessionId, contentId, siteId).run();
+          }
+          // 콘텐츠 본문도 D1에 필요 (학습 데이터 생성 시 읽으므로)
+          for (const contentId of contentIds) {
+            const exists = await c.env.D1_DB.prepare('SELECT id FROM TB_CONTENT WHERE id = ?').bind(contentId).first();
+            if (!exists) {
+              const pgContent = await c.env.DB.prepare('SELECT * FROM TB_CONTENT WHERE id = ?').bind(contentId).first();
+              if (pgContent) {
+                await c.env.D1_DB.prepare('INSERT OR REPLACE INTO TB_CONTENT (id, content_nm, filename, file_type, file_size, content, lesson_id, site_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                  .bind(pgContent.id, pgContent.content_nm, pgContent.filename || '', pgContent.file_type || 'text', pgContent.file_size || 0, pgContent.content, pgContent.lesson_id, pgContent.site_id, pgContent.status, pgContent.created_at, pgContent.updated_at).run();
+              }
+            }
+          }
+        } catch (d1Err) {
+          console.error('[CreateWithContents] D1 sync error:', d1Err.message);
+        }
+      }
+
+      // Queue에 메시지 전송 → 즉시 응답
+      await c.env.QUEUE.send({
+        type: 'session-generation',
+        sessionId,
+        contentIds,
+        contents: successContents.map(r => ({
+          id: r.id,
+          index: r.index,
+          title: r.title,
+          inputName: r.inputName,
+          inputType: r.inputType,
+          inputUrl: r.inputUrl,
+          type: r.type
+        })),
+        settings,
+        siteId,
+        courseId,
+        courseUserId,
+        lessonId,
+        userId,
+        callbackUrl,
+        callbackData
+      });
+
+      return c.json({
+        success: true,
+        data: {
+          sessionId,
+          siteId,
+          generationStatus: 'pending',
+          contents: successContents.map(r => ({
+            id: r.id,
+            index: r.index,
+            title: r.title,
+            inputName: r.inputName,
+            inputType: r.inputType,
+            inputUrl: r.inputUrl,
+            type: r.type
+          })),
+          contentErrors: errors.length > 0 ? errors : undefined
+        },
+        message: '세션이 등록되었습니다. 생성 완료 시 콜백으로 알림합니다.'
+      }, 202);
+    }
+
+    // ── 동기 처리 (callbackUrl 없을 때, 기존 로직) ──
     const quizService = new QuizService(c.env, siteId);
     quizService.setContext(sessionId, lessonId);
     const learningService = new LearningService(c.env, siteId);
@@ -629,8 +742,17 @@ sessions.post('/create-with-contents', async (c) => {
       success: true,
       data: {
         sessionId,
-        contentIds,
+        generationStatus: 'none',
         title: learningData.sessionNm || sessionNm || '새 대화',
+        contents: successContents.map(r => ({
+          id: r.id,
+          index: r.index,
+          title: r.title,
+          inputName: r.inputName,
+          inputType: r.inputType,
+          inputUrl: r.inputUrl,
+          type: r.type
+        })),
         settings: {
           persona: session.persona,
           temperature: session.temperature,
