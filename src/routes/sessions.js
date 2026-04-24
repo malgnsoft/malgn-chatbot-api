@@ -624,33 +624,6 @@ sessions.post('/create-with-contents', async (c) => {
 
     // ── 3단계: Queue(비동기) 또는 동기 처리 분기 ──
     if (useQueue) {
-      // D1에 세션 + 콘텐츠 동기화 (Queue consumer가 D1을 사용하므로)
-      if (c.env.D1_DB) {
-        try {
-          await c.env.D1_DB.prepare(`INSERT OR REPLACE INTO TB_SESSION (id, parent_id, course_id, course_user_id, lesson_id, user_id, session_nm, persona, temperature, top_p, max_tokens, summary_count, recommend_count, choice_count, ox_count, quiz_difficulty, chat_content_ids, generation_status, site_id, status, created_at, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
-            .bind(sessionId, courseId, courseUserId, lessonId, userId, sessionNm, settings.persona || defaultPersona, settings.temperature ?? 0.3, settings.topP ?? 0.3, settings.maxTokens ?? 1024, settings.summaryCount ?? 3, settings.recommendCount ?? 3, settings.choiceCount ?? 3, settings.oxCount ?? 2, settings.quizDifficulty || 'normal', chatContentIds ? JSON.stringify(chatContentIds) : null, siteId).run();
-          for (const contentId of contentIds) {
-            await c.env.D1_DB.prepare('INSERT OR IGNORE INTO TB_SESSION_CONTENT (session_id, content_id, site_id, status) VALUES (?, ?, ?, 1)')
-              .bind(sessionId, contentId, siteId).run();
-          }
-          // 콘텐츠 본문도 D1에 필요 (학습 데이터 생성 시 읽으므로)
-          for (const contentId of contentIds) {
-            const exists = await c.env.D1_DB.prepare('SELECT id FROM TB_CONTENT WHERE id = ?').bind(contentId).first();
-            if (!exists) {
-              const pgContent = await c.env.DB.prepare('SELECT * FROM TB_CONTENT WHERE id = ?').bind(contentId).first();
-              if (pgContent) {
-                const toStr = (v) => v instanceof Date ? v.toISOString() : (v || new Date().toISOString());
-                await c.env.D1_DB.prepare('INSERT OR REPLACE INTO TB_CONTENT (id, content_nm, filename, file_type, file_size, content, lesson_id, site_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                  .bind(pgContent.id, pgContent.content_nm, pgContent.filename || '', pgContent.file_type || 'text', pgContent.file_size || 0, pgContent.content, pgContent.lesson_id, pgContent.site_id, pgContent.status, toStr(pgContent.created_at), toStr(pgContent.updated_at)).run();
-              }
-            }
-          }
-          console.log(`[CreateWithContents] D1 sync done: session=${sessionId}, contents=${contentIds.join(',')}`);
-        } catch (d1Err) {
-          console.error('[CreateWithContents] D1 sync error:', d1Err.message, d1Err.stack);
-        }
-      }
-
       // Queue에 메시지 전송 → 즉시 응답
       await c.env.QUEUE.send({
         type: 'session-generation',

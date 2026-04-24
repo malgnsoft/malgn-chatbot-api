@@ -17,8 +17,6 @@ import aiLogsRoutes from './routes/aiLogs.js';
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
 import { authMiddleware } from './middleware/auth.js';
-// Import database
-import { createDatabase } from './utils/database.js';
 
 // Import OpenAPI spec
 import openApiSpec from './openapi.js';
@@ -27,15 +25,6 @@ const app = new Hono();
 
 // Global middleware
 app.use('*', logger());
-
-// DB 미들웨어: HYPERDRIVE → PG 래퍼, 없으면 D1 fallback
-app.use('*', async (c, next) => {
-  c.env.DB = createDatabase(c.env);
-  await next();
-  if (c.env.DB?.cleanup) {
-    c.executionCtx.waitUntil(c.env.DB.cleanup());
-  }
-});
 
 // CORS 설정 - 모든 출처 허용 (개발용)
 app.use('*', cors({
@@ -226,10 +215,7 @@ export default {
   async queue(batch, env) {
     console.log(`[Queue] Batch received: ${batch.messages.length} messages`);
 
-    // D1을 DB로 사용 (Queue에서는 D1이 안정적)
-    const d1 = env.D1_DB;
-    // PostgreSQL 동기화용
-    const pg = env.HYPERDRIVE ? createDatabase(env) : null;
+    
 
     for (const msg of batch.messages) {
       const { type, sessionId, siteId, contentIds, contents: contentDetails, settings, courseId, courseUserId, lessonId, userId, callbackUrl, callbackData } = msg.body;
@@ -238,14 +224,14 @@ export default {
         // 퀴즈 생성 (D1 사용)
         try {
           console.log(`[Queue/Quiz] Session ${sessionId} started`);
-          const quizService = new QuizService({ ...env, DB: d1 }, siteId || 0);
+          const quizService = new QuizService(env, siteId || 0);
           quizService.setContext(sessionId, lessonId);
           const choiceCount = settings.choiceCount ?? 3;
           const oxCount = settings.oxCount ?? 2;
 
           const contentTexts = [];
           for (const contentId of contentIds) {
-            const content = await d1.prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
+            const content = await env.DB.prepare('SELECT content FROM TB_CONTENT WHERE id = ? AND status = 1 AND site_id = ?')
               .bind(contentId, siteId || 0).first();
             if (content?.content?.trim().length >= 100) contentTexts.push(content.content);
           }
@@ -256,14 +242,6 @@ export default {
               { choiceCount, oxCount, difficulty: settings.quizDifficulty || 'normal' },
               sessionId
             );
-            // PG에 퀴즈 동기화
-            if (pg) {
-              const { results: quizzes } = await d1.prepare('SELECT * FROM TB_QUIZ WHERE session_id = ? AND status = 1').bind(sessionId).all();
-              for (const q of (quizzes || [])) {
-                await pg.prepare('INSERT INTO TB_QUIZ (id, content_id, session_id, quiz_type, question, options, answer, explanation, position, site_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING')
-                  .bind(q.id, q.content_id, q.session_id, q.quiz_type, q.question, q.options, q.answer, q.explanation, q.position, q.site_id, q.status, q.created_at).run().catch(() => {});
-              }
-            }
           }
           console.log(`[Queue/Quiz] Session ${sessionId} completed`);
         } catch (err) {
@@ -276,7 +254,7 @@ export default {
       if (type !== 'session-generation') { msg.ack(); continue; }
 
       // 세션 유효성 확인
-      const session = await d1.prepare('SELECT generation_status, status FROM TB_SESSION WHERE id = ?').bind(sessionId).first();
+      const session = await env.DB.prepare('SELECT generation_status, status FROM TB_SESSION WHERE id = ?').bind(sessionId).first();
       if (!session || session.status === -1 || session.generation_status === 'completed') {
         msg.ack();
         continue;
@@ -284,37 +262,21 @@ export default {
 
       try {
         // 상태: processing (D1)
-        await d1.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        await env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .bind('processing', sessionId).run();
-        if (pg) pg.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind('processing', sessionId).run().catch(() => {});
 
         console.log(`[Queue] Session ${sessionId} processing started`);
 
         // 학습 데이터 생성 (D1 사용)
-        const learningService = new LearningService({ ...env, DB: d1 }, siteId || 0);
+        const learningService = new LearningService(env, siteId || 0);
         learningService.setContext(sessionId, lessonId);
         const learningData = await learningService.generateAndStoreLearningData(sessionId, contentIds, settings);
 
         // 상태: completed (D1)
-        await d1.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        await env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .bind('completed', sessionId).run();
 
         console.log(`[Queue] Session ${sessionId} completed`);
-
-        // PostgreSQL 동기화 (세션 결과 복사)
-        if (pg) {
-          try {
-            const updated = await d1.prepare('SELECT * FROM TB_SESSION WHERE id = ?').bind(sessionId).first();
-            if (updated) {
-              await pg.prepare('UPDATE TB_SESSION SET session_nm = ?, generation_status = ?, learning_goal = ?, learning_summary = ?, recommended_questions = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-                .bind(updated.session_nm, 'completed', updated.learning_goal, updated.learning_summary, updated.recommended_questions, sessionId).run();
-            }
-            console.log(`[Queue] Session ${sessionId} synced to PostgreSQL`);
-          } catch (syncErr) {
-            console.error(`[Queue] Session ${sessionId} PG sync failed:`, syncErr.message);
-          }
-        }
 
         // 퀴즈 생성 (Queue에 별도 메시지)
         const choiceCount = settings.choiceCount ?? 3;
@@ -344,9 +306,7 @@ export default {
 
       } catch (error) {
         console.error(`[Queue] Session ${sessionId} failed:`, error.message);
-        await d1.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind('failed', sessionId).run().catch(() => {});
-        if (pg) pg.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        await env.DB.prepare('UPDATE TB_SESSION SET generation_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .bind('failed', sessionId).run().catch(() => {});
 
         if (callbackUrl) {
@@ -363,37 +323,20 @@ export default {
 
       msg.ack();
     }
-
-    // PG 커넥션 정리
-    if (pg?.cleanup) await pg.cleanup();
   },
 
-  // Cron Trigger → 비정상 상태 정리 (5분마다, D1 + PG 동시)
+  // Cron Trigger → 비정상 상태 정리 (5분마다)
   async scheduled(event, env) {
-    const d1 = env.D1_DB;
-    const pg = env.HYPERDRIVE ? createDatabase(env) : null;
-
-    // D1: 10분 넘게 processing → failed (SQLite 문법)
-    const r1 = await d1.prepare(`
+    const r1 = await env.DB.prepare(`
       UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP
       WHERE generation_status = 'processing' AND updated_at < datetime('now', '-10 minutes')
     `).run();
-    if (r1.meta.changes > 0) console.log(`[Cron/D1] ${r1.meta.changes}개 processing → failed`);
+    if (r1.meta.changes > 0) console.log(`[Cron] ${r1.meta.changes}개 processing → failed`);
 
-    // D1: 30분 넘게 pending → failed
-    const r2 = await d1.prepare(`
+    const r2 = await env.DB.prepare(`
       UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP
       WHERE generation_status = 'pending' AND updated_at < datetime('now', '-30 minutes')
     `).run();
-    if (r2.meta.changes > 0) console.log(`[Cron/D1] ${r2.meta.changes}개 pending → failed`);
-
-    // PG도 동일 처리
-    if (pg) {
-      try {
-        await pg.prepare(`UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE generation_status = 'processing' AND updated_at < NOW() - INTERVAL '10 minutes'`).run();
-        await pg.prepare(`UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE generation_status = 'pending' AND updated_at < NOW() - INTERVAL '30 minutes'`).run();
-        await pg.cleanup();
-      } catch (e) { console.error('[Cron/PG]', e.message); }
-    }
+    if (r2.meta.changes > 0) console.log(`[Cron] ${r2.meta.changes}개 pending → failed`);
   }
 };

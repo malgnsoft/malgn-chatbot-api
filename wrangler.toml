@@ -27,13 +27,9 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[d1_databases]]
-binding = "D1_DB"
+binding = "DB"
 database_name = "malgn-chatbot-db"
 database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
-
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "e72f917cd194472ca6f71f5e4186c3ca"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -77,13 +73,9 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user1.d1_databases]]
-binding = "D1_DB"
+binding = "DB"
 database_name = "malgn-chatbot-db"
 database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
-
-[[env.user1.hyperdrive]]
-binding = "HYPERDRIVE"
-id = "e72f917cd194472ca6f71f5e4186c3ca"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"
@@ -119,7 +111,7 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user2.d1_databases]]
-binding = "D1_DB"
+binding = "DB"
 database_name = "malgn-chatbot-db-user2"
 database_id = "e18e63b7-a10e-4c41-b40d-bb62d6cc3deb"
 
