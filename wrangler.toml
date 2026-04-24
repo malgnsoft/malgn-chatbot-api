@@ -33,7 +33,7 @@ database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "068fcc7ceb624716874da9a9b42f5ab8"
+id = "e72f917cd194472ca6f71f5e4186c3ca"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -83,7 +83,7 @@ database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[env.user1.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "068fcc7ceb624716874da9a9b42f5ab8"
+id = "e72f917cd194472ca6f71f5e4186c3ca"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"

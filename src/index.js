@@ -257,17 +257,17 @@ export default {
   async scheduled(event, env) {
     env.DB = createDatabase(env);
 
-    // 10분 넘게 processing → failed (MySQL 호환 문법)
+    // 10분 넘게 processing → failed
     const r1 = await env.DB.prepare(`
       UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP
-      WHERE generation_status = 'processing' AND updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+      WHERE generation_status = 'processing' AND updated_at < NOW() - INTERVAL '10 minutes'
     `).run();
     if (r1.meta.changes > 0) console.log(`[Cron] ${r1.meta.changes}개 processing → failed`);
 
     // 30분 넘게 pending → failed
     const r2 = await env.DB.prepare(`
       UPDATE TB_SESSION SET generation_status = 'failed', updated_at = CURRENT_TIMESTAMP
-      WHERE generation_status = 'pending' AND updated_at < DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+      WHERE generation_status = 'pending' AND updated_at < NOW() - INTERVAL '30 minutes'
     `).run();
     if (r2.meta.changes > 0) console.log(`[Cron] ${r2.meta.changes}개 pending → failed`);
 
