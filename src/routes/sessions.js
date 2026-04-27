@@ -582,8 +582,7 @@ sessions.post('/create-with-contents', async (c) => {
       }, 400);
     }
 
-    // 2단계: 세션 생성
-    const useQueue = !!callbackUrl && !!c.env.QUEUE;
+    // 2단계: 세션 생성 (항상 동기 처리)
     const defaultPersona = '당신은 친절하고 전문적인 AI 튜터입니다. 학생들이 이해하기 쉽게 설명하고, 질문에 정확하게 답변해 주세요.';
     const insertResult = await c.env.DB
       .prepare(`
@@ -607,7 +606,7 @@ sessions.post('/create-with-contents', async (c) => {
         settings.oxCount ?? 2,
         settings.quizDifficulty || 'normal',
         chatContentIds ? JSON.stringify(chatContentIds) : null,
-        useQueue ? 'pending' : 'none',
+        'none',
         siteId
       )
       .run();
@@ -622,54 +621,7 @@ sessions.post('/create-with-contents', async (c) => {
         .run();
     }
 
-    // ── 3단계: Queue(비동기) 또는 동기 처리 분기 ──
-    if (useQueue) {
-      // Queue에 메시지 전송 → 즉시 응답
-      await c.env.QUEUE.send({
-        type: 'session-generation',
-        sessionId,
-        contentIds,
-        contents: successContents.map(r => ({
-          id: r.id,
-          index: r.index,
-          title: r.title,
-          inputName: r.inputName,
-          inputType: r.inputType,
-          inputUrl: r.inputUrl,
-          type: r.type
-        })),
-        settings,
-        siteId,
-        courseId,
-        courseUserId,
-        lessonId,
-        userId,
-        callbackUrl,
-        callbackData
-      });
-
-      return c.json({
-        success: true,
-        data: {
-          sessionId,
-          siteId,
-          generationStatus: 'pending',
-          contents: successContents.map(r => ({
-            id: r.id,
-            index: r.index,
-            title: r.title,
-            inputName: r.inputName,
-            inputType: r.inputType,
-            inputUrl: r.inputUrl,
-            type: r.type
-          })),
-          contentErrors: errors.length > 0 ? errors : undefined
-        },
-        message: '세션이 등록되었습니다. 생성 완료 시 콜백으로 알림합니다.'
-      }, 202);
-    }
-
-    // ── 동기 처리 (callbackUrl 없을 때, 기존 로직) ──
+    // ── 3단계: 동기 처리 ──
     const quizService = new QuizService(c.env, siteId);
     quizService.setContext(sessionId, lessonId);
     const learningService = new LearningService(c.env, siteId);
@@ -713,37 +665,50 @@ sessions.post('/create-with-contents', async (c) => {
       .bind(sessionId, siteId)
       .first();
 
+    const responseData = {
+      sessionId,
+      siteId,
+      generationStatus: 'completed',
+      title: learningData.sessionNm || sessionNm || '새 대화',
+      courseId, courseUserId, lessonId, userId,
+      contents: successContents.map(r => ({
+        id: r.id,
+        index: r.index,
+        title: r.title,
+        inputName: r.inputName,
+        inputType: r.inputType,
+        inputUrl: r.inputUrl,
+        type: r.type
+      })),
+      settings: {
+        persona: session.persona,
+        temperature: session.temperature,
+        topP: session.top_p,
+        maxTokens: session.max_tokens,
+        choiceCount: session.choice_count,
+        oxCount: session.ox_count,
+        quizDifficulty: session.quiz_difficulty || 'normal'
+      },
+      learning: {
+        goal: learningData.learningGoal,
+        summary: learningData.learningSummary,
+        recommendedQuestions: learningData.recommendedQuestions
+      },
+      contentErrors: errors.length > 0 ? errors : undefined
+    };
+
+    // callbackUrl이 있으면 fire-and-forget으로 콜백 (LMS 호환)
+    if (callbackUrl) {
+      c.executionCtx.waitUntil(fetch(callbackUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...responseData, callbackData })
+      }).catch(() => {}));
+    }
+
     return c.json({
       success: true,
-      data: {
-        sessionId,
-        generationStatus: 'none',
-        title: learningData.sessionNm || sessionNm || '새 대화',
-        contents: successContents.map(r => ({
-          id: r.id,
-          index: r.index,
-          title: r.title,
-          inputName: r.inputName,
-          inputType: r.inputType,
-          inputUrl: r.inputUrl,
-          type: r.type
-        })),
-        settings: {
-          persona: session.persona,
-          temperature: session.temperature,
-          topP: session.top_p,
-          maxTokens: session.max_tokens,
-          choiceCount: session.choice_count,
-          oxCount: session.ox_count,
-          quizDifficulty: session.quiz_difficulty || 'normal'
-        },
-        learning: {
-          goal: learningData.learningGoal,
-          summary: learningData.learningSummary,
-          recommendedQuestions: learningData.recommendedQuestions
-        },
-        contentErrors: errors.length > 0 ? errors : undefined
-      },
+      data: responseData,
       message: `세션 생성 완료. 콘텐츠 ${contentIds.length}개 등록, 학습 데이터/퀴즈 생성 완료.`
     }, 201);
 

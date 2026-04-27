@@ -27,9 +27,13 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[d1_databases]]
-binding = "DB"
+binding = "D1_DB"
 database_name = "malgn-chatbot-db"
 database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "e72f917cd194472ca6f71f5e4186c3ca"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -42,17 +46,6 @@ bucket_name = "malgn-chatbot-files"
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
-
-# Queue
-[[queues.producers]]
-queue = "malgn-chatbot-queue"
-binding = "QUEUE"
-
-[[queues.consumers]]
-queue = "malgn-chatbot-queue"
-max_batch_size = 1
-max_retries = 10
-retry_delay = 10
 
 # Cron Trigger (5분마다 비정상 상태 정리)
 [triggers]
@@ -73,9 +66,13 @@ binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
 [[env.user1.d1_databases]]
-binding = "DB"
+binding = "D1_DB"
 database_name = "malgn-chatbot-db"
 database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
+
+[[env.user1.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "e72f917cd194472ca6f71f5e4186c3ca"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"
@@ -88,13 +85,6 @@ bucket_name = "malgn-chatbot-files"
 [[env.user1.vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
-
-[[env.user1.queues.producers]]
-queue = "malgn-chatbot-queue"
-binding = "QUEUE"
-
-# consumer는 default Worker에서 처리 (Queue당 consumer 1개 제한)
-# cron도 default Worker에서 처리
 
 # ============================================
 # Tenant: user2
@@ -126,15 +116,6 @@ bucket_name = "malgn-chatbot-files-user2"
 [[env.user2.vectorize]]
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors-user2"
-
-[[env.user2.queues.producers]]
-queue = "malgn-chatbot-queue-user2"
-binding = "QUEUE"
-
-[[env.user2.queues.consumers]]
-queue = "malgn-chatbot-queue-user2"
-max_batch_size = 1
-max_retries = 3
 
 [env.user2.triggers]
 crons = ["*/5 * * * *"]
