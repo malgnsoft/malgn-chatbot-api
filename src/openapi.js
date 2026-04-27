@@ -2,8 +2,8 @@ export default {
   openapi: '3.0.0',
   info: {
     title: 'Malgn Chatbot API',
-    version: '2.1.0',
-    description: 'RAG 기반 AI 튜터 챗봇 API - Cloudflare Workers + Hono\n\n학습 자료를 등록하면 벡터 검색(Vectorize)을 통해 문서 기반 AI 응답을 생성합니다.\n부모-자식 세션 구조로 교수자/학습자 분리 운영을 지원합니다.\n\n## 멀티사이트\n모든 인증 필요 API에 `X-Site-Id` 헤더를 전달하여 사이트별 데이터를 격리합니다.\n미전달 시 기본값 `0`이 적용됩니다.'
+    version: '3.0.0',
+    description: 'RAG 기반 AI 튜터 챗봇 API - Cloudflare Workers + Hono\n\n학습 자료를 등록하면 벡터 검색(Vectorize)을 통해 문서 기반 AI 응답을 생성합니다.\n부모-자식 세션 구조로 교수자/학습자 분리 운영을 지원합니다.\n\n## 멀티사이트\n모든 인증 필요 API에 `X-Site-Id` 헤더를 전달하여 사이트별 데이터를 격리합니다.\n미전달 시 기본값 `1`이 적용됩니다.\n\n## 처리 방식\n세션 생성(`/sessions/create-with-contents`)은 **동기 처리** 방식입니다. 학습 데이터/퀴즈 생성이 완료된 후 응답합니다 (10~30초 소요). 클라이언트는 HTTP 타임아웃을 60초 이상으로 설정하세요.'
   },
   servers: [
     {
@@ -24,7 +24,8 @@ export default {
     { name: 'Chat', description: '채팅 API (RAG 기반 질의응답)' },
     { name: 'Contents', description: '콘텐츠(학습 자료) 관리' },
     { name: 'Sessions', description: '채팅 세션 관리 (부모/자식 세션)' },
-    { name: 'Quizzes', description: '퀴즈 관리 (4지선다, OX)' }
+    { name: 'Quizzes', description: '퀴즈 관리 (4지선다, OX)' },
+    { name: 'AI Logs', description: 'AI 호출 로그 조회' }
   ],
   paths: {
     '/': {
@@ -529,7 +530,7 @@ export default {
     '/sessions/create-with-contents': {
       post: {
         summary: '콘텐츠 등록 + 세션 생성 일괄 처리',
-        description: '콘텐츠(링크/텍스트) 등록 → 임베딩 생성 → 세션 생성 → 학습 메타데이터/퀴즈 자동 생성을 한 번의 API 호출로 처리합니다.\n\n위캔디오 등 외부 LMS에서 자막/교안 파일을 AI 콘텐츠로 등록하고 세션까지 일괄 생성할 때 사용합니다.',
+        description: '콘텐츠(링크/텍스트) 등록 → 임베딩 생성 → 세션 생성 → 학습 메타데이터/퀴즈 자동 생성을 한 번의 API 호출로 처리합니다.\n\n**동기 처리**: 모든 생성이 완료된 후 201로 응답합니다 (10~30초 소요).\n\n**HTTP 타임아웃 설정**: 클라이언트에서 60초 이상의 타임아웃을 권장합니다.\n\n**callbackUrl (선택)**: 응답 후 동일한 결과를 별도로 POST 알림받고 싶을 때 사용. 전달하면 fire-and-forget으로 호출되며 응답 시점에 영향 없습니다.',
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [{ $ref: '#/components/parameters/SiteId' }],
@@ -547,7 +548,7 @@ export default {
                     items: {
                       type: 'object',
                       properties: {
-                        type: { type: 'string', enum: ['link', 'text'], description: '콘텐츠 타입' },
+                        type: { type: 'string', enum: ['link', 'link-subtitle', 'link-file', 'text'], description: '콘텐츠 타입 (link-subtitle: 자막, link-file: 파일, link: 일반 링크, text: 텍스트)' },
                         title: { type: 'string', description: '콘텐츠 제목' },
                         url: { type: 'string', description: 'URL (type=link일 때 필수, VTT/SRT/PDF/DOCX/PPTX/HTML 지원)' },
                         content: { type: 'string', description: '본문 텍스트 (type=text일 때 필수)' }
@@ -574,25 +575,44 @@ export default {
                   courseUserId: { type: 'integer', description: 'LMS 수강생 ID' },
                   lessonId: { type: 'integer', description: 'LMS 레슨(차시) ID' },
                   userId: { type: 'integer', description: '사용자 ID' },
-                  chatContentIds: { type: 'array', items: { type: 'integer' }, description: '채팅 시 사용할 콘텐츠 ID 배열 (선택)' }
+                  chatContentIds: { type: 'array', items: { type: 'integer' }, description: '채팅 시 사용할 콘텐츠 ID 배열 (선택)' },
+                  callbackUrl: { type: 'string', description: '응답과 동일한 결과를 추가로 POST할 콜백 URL (선택, fire-and-forget). 응답에는 영향 없음.' },
+                  callbackData: { type: 'object', description: '콜백 시 그대로 반환할 임의 데이터 (LMS에서 요청 식별용)' }
                 }
               },
-              example: {
-                contents: [
-                  { type: 'link', url: 'https://cdn.example.com/subtitle_ko.vtt', title: '위캔디오 자막' },
-                  { type: 'link', url: 'https://cdn.example.com/lesson_material.pdf', title: '교안 PDF' }
-                ],
-                settings: { choiceCount: 3, oxCount: 2, quizDifficulty: 'normal' },
-                courseId: 123,
-                lessonId: 456,
-                sessionNm: '한국어 1A 4-1차시'
+              examples: {
+                basic: {
+                  summary: '기본 (동기 처리)',
+                  value: {
+                    contents: [
+                      { type: 'link-subtitle', url: 'https://cdn.example.com/subtitle_ko.vtt', title: '위캔디오 자막' },
+                      { type: 'link-file', url: 'https://cdn.example.com/lesson_material.pdf', title: '교안 PDF' }
+                    ],
+                    settings: { persona: 'AI 튜터 페르소나', temperature: 0.3, topP: 0.3, maxTokens: 1024, summaryCount: 3, recommendCount: 3, choiceCount: 3, oxCount: 2, quizDifficulty: 'normal' },
+                    courseId: 123,
+                    lessonId: 456,
+                    sessionNm: '한국어 1A 4-1차시'
+                  }
+                },
+                withCallback: {
+                  summary: '콜백 알림 포함',
+                  value: {
+                    contents: [
+                      { type: 'link-subtitle', url: 'https://cdn.example.com/subtitle_ko.vtt', title: '1과 자막' }
+                    ],
+                    settings: { choiceCount: 3, oxCount: 2, quizDifficulty: 'normal' },
+                    lessonId: 2942,
+                    callbackUrl: 'https://lms.example.com/api/chatbot/callback',
+                    callbackData: { lessonId: 2942 }
+                  }
+                }
               }
             }
           }
         },
         responses: {
           '201': {
-            description: '일괄 생성 성공',
+            description: '세션 생성 + 학습데이터/퀴즈 생성 완료',
             content: {
               'application/json': {
                 schema: {
@@ -603,8 +623,25 @@ export default {
                       type: 'object',
                       properties: {
                         sessionId: { type: 'integer', description: '생성된 세션 ID' },
-                        contentIds: { type: 'array', items: { type: 'integer' }, description: '등록된 콘텐츠 ID 목록' },
+                        generationStatus: { type: 'string', enum: ['completed'], description: '생성 완료' },
                         title: { type: 'string' },
+                        contents: {
+                          type: 'array',
+                          description: '등록된 콘텐츠 상세 목록',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              id: { type: 'integer', description: '생성된 콘텐츠 ID' },
+                              index: { type: 'integer', description: '요청 배열에서의 순서 (0부터)' },
+                              title: { type: 'string', description: 'DB에 저장된 제목' },
+                              inputName: { type: 'string', description: '요청 시 전달한 name/title' },
+                              inputType: { type: 'string', description: '요청 시 전달한 type' },
+                              inputUrl: { type: 'string', description: '요청 시 전달한 url (link 타입만)' },
+                              type: { type: 'string', description: '저장된 파일 타입' }
+                            }
+                          }
+                        },
+                        settings: { type: 'object' },
                         learning: {
                           type: 'object',
                           properties: {
@@ -637,7 +674,8 @@ export default {
         parameters: [
           { $ref: '#/components/parameters/SiteId' },
           { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호' },
-          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 }, description: '페이지당 개수' }
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 }, description: '페이지당 개수' },
+          { name: 'generationStatus', in: 'query', schema: { type: 'string' }, description: '생성 상태 필터 (선택). 허용값: none, completed, failed (콤마 구분 다중 선택 가능)' }
         ],
         responses: {
           '200': {
@@ -1293,6 +1331,77 @@ export default {
         }
       }
     },
+    '/ai-logs': {
+      get: {
+        summary: 'AI 사용 로그 목록',
+        description: 'AI 모델 호출 로그를 조회합니다. 채팅, 학습데이터 생성, 퀴즈 생성, 임베딩 등 요청 유형별 필터링이 가능합니다.',
+        tags: ['AI Logs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { $ref: '#/components/parameters/SiteId' },
+          { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 }, description: '페이지당 개수' },
+          { name: 'type', in: 'query', schema: { type: 'string', enum: ['chat', 'learning', 'quiz_choice', 'quiz_ox', 'embedding'] }, description: '요청 유형 필터' },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' }, description: '시작일 (YYYY-MM-DD)' },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' }, description: '종료일 (YYYY-MM-DD)' }
+        ],
+        responses: {
+          '200': {
+            description: 'AI 로그 목록',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        logs: { type: 'array', items: { type: 'object' } },
+                        pagination: { $ref: '#/components/schemas/Pagination' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
+    '/ai-logs/summary': {
+      get: {
+        summary: 'AI 사용량 요약',
+        description: '요청 유형별 AI 사용량을 집계하여 반환합니다.',
+        tags: ['AI Logs'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { $ref: '#/components/parameters/SiteId' },
+          { name: 'startDate', in: 'query', schema: { type: 'string', format: 'date' }, description: '시작일 (YYYY-MM-DD)' },
+          { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date' }, description: '종료일 (YYYY-MM-DD)' }
+        ],
+        responses: {
+          '200': {
+            description: '사용량 요약',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: { type: 'object' }
+                  }
+                }
+              }
+            }
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '500': { $ref: '#/components/responses/InternalError' }
+        }
+      }
+    },
     '/sessions/{id}/quizzes/reorder': {
       put: {
         summary: '세션 퀴즈 순서 재정렬',
@@ -1345,8 +1454,8 @@ export default {
         name: 'X-Site-Id',
         in: 'header',
         required: false,
-        schema: { type: 'integer', default: 0 },
-        description: '멀티사이트 ID. 사이트별 데이터 격리에 사용됩니다. 미전달 시 기본값 0.'
+        schema: { type: 'integer', default: 1 },
+        description: '멀티사이트 ID. 사이트별 데이터 격리에 사용됩니다. 미전달 시 기본값 1.'
       }
     },
     schemas: {
@@ -1411,10 +1520,17 @@ export default {
         properties: {
           id: { type: 'integer' },
           title: { type: 'string', description: '세션 제목 (AI 생성 또는 첫 메시지 기반)' },
+          lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
+          courseId: { type: 'integer', nullable: true, description: 'LMS 코스 ID' },
+          userId: { type: 'integer', nullable: true, description: '생성자 ID' },
+          generationStatus: { type: 'string', enum: ['none', 'completed', 'failed'], description: '학습데이터/퀴즈 생성 상태 (동기 처리이므로 completed 또는 failed)' },
+          hasLearningData: { type: 'boolean', description: '학습 데이터(목표/요약/추천질문) 생성 여부' },
+          contentCount: { type: 'integer', description: '연결된 콘텐츠 수' },
+          childCount: { type: 'integer', description: '자식 세션(학습자) 수' },
           lastMessage: { type: 'string', nullable: true, description: '마지막 메시지 미리보기 (50자)' },
           messageCount: { type: 'integer' },
-          createdAt: { type: 'string', format: 'date-time' },
-          updatedAt: { type: 'string', format: 'date-time' }
+          created_at: { type: 'string', format: 'date-time' },
+          updated_at: { type: 'string', format: 'date-time' }
         }
       },
       SessionDetail: {
