@@ -349,6 +349,69 @@ sessions.post('/', async (c) => {
 
     // ── 부모 세션 생성 (기존 로직) ──
 
+    // 부모 세션 중복 체크 (lessonId 기준)
+    if (lessonId) {
+      const existingParent = await c.env.DB
+        .prepare('SELECT id FROM TB_SESSION WHERE parent_id = 0 AND lesson_id = ? AND status = 1 AND site_id = ? ORDER BY id DESC LIMIT 1')
+        .bind(lessonId, siteId)
+        .first();
+      if (existingParent) {
+        const session = await c.env.DB
+          .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND site_id = ?')
+          .bind(existingParent.id, siteId)
+          .first();
+        const { results: linkedContents } = await c.env.DB
+          .prepare(`
+            SELECT c.id, c.content_nm
+            FROM TB_SESSION_CONTENT sc
+            JOIN TB_CONTENT c ON sc.content_id = c.id AND c.status = 1
+            WHERE sc.session_id = ? AND sc.status = 1 AND sc.site_id = ?
+          `)
+          .bind(existingParent.id, siteId)
+          .all();
+        let learningSummary = null;
+        if (session.learning_summary) {
+          try { learningSummary = JSON.parse(session.learning_summary); } catch {}
+        }
+        let recommendedQuestions = [];
+        if (session.recommended_questions) {
+          try { recommendedQuestions = JSON.parse(session.recommended_questions); } catch {}
+        }
+        return c.json({
+          success: true,
+          data: {
+            session: { id: existingParent.id, parentId: 0 },
+            id: existingParent.id,
+            parentId: 0,
+            userId: session.user_id,
+            title: session.session_nm || '새 대화',
+            settings: {
+              persona: session.persona,
+              temperature: session.temperature,
+              topP: session.top_p,
+              maxTokens: session.max_tokens,
+              summaryCount: session.summary_count,
+              recommendCount: session.recommend_count,
+              choiceCount: session.choice_count,
+              oxCount: session.ox_count,
+              quizDifficulty: session.quiz_difficulty || 'normal'
+            },
+            learning: {
+              goal: session.learning_goal || null,
+              summary: learningSummary,
+              recommendedQuestions
+            },
+            contents: linkedContents || [],
+            messages: [],
+            messageCount: 0,
+            created_at: session.created_at,
+            updated_at: session.updated_at
+          },
+          message: '기존 부모 세션을 반환했습니다.'
+        }, 200);
+      }
+    }
+
     // 학습 자료 필수 검증
     if (contentIds.length === 0) {
       return c.json({
@@ -544,6 +607,61 @@ sessions.post('/create-with-contents', async (c) => {
     }
 
     const siteId = c.get('siteId');
+
+    // 부모 세션 중복 체크 (lessonId 기준) — 콘텐츠 업로드 전에 차단
+    if (lessonId) {
+      const existingParent = await c.env.DB
+        .prepare('SELECT id FROM TB_SESSION WHERE parent_id = 0 AND lesson_id = ? AND status = 1 AND site_id = ? ORDER BY id DESC LIMIT 1')
+        .bind(lessonId, siteId)
+        .first();
+      if (existingParent) {
+        const session = await c.env.DB
+          .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND site_id = ?')
+          .bind(existingParent.id, siteId)
+          .first();
+        const { results: linkedContents } = await c.env.DB
+          .prepare(`
+            SELECT c.id, c.content_nm
+            FROM TB_SESSION_CONTENT sc
+            JOIN TB_CONTENT c ON sc.content_id = c.id AND c.status = 1
+            WHERE sc.session_id = ? AND sc.status = 1 AND sc.site_id = ?
+          `)
+          .bind(existingParent.id, siteId)
+          .all();
+        let learningSummary = null;
+        if (session.learning_summary) {
+          try { learningSummary = JSON.parse(session.learning_summary); } catch {}
+        }
+        let recommendedQuestions = [];
+        if (session.recommended_questions) {
+          try { recommendedQuestions = JSON.parse(session.recommended_questions); } catch {}
+        }
+        return c.json({
+          success: true,
+          data: {
+            sessionId: existingParent.id,
+            contentIds: (linkedContents || []).map(c => c.id),
+            title: session.session_nm || '새 대화',
+            settings: {
+              persona: session.persona,
+              temperature: session.temperature,
+              topP: session.top_p,
+              maxTokens: session.max_tokens,
+              choiceCount: session.choice_count,
+              oxCount: session.ox_count,
+              quizDifficulty: session.quiz_difficulty || 'normal'
+            },
+            learning: {
+              goal: session.learning_goal || null,
+              summary: learningSummary,
+              recommendedQuestions
+            },
+            contents: linkedContents || []
+          },
+          message: '기존 부모 세션을 반환했습니다.'
+        }, 200);
+      }
+    }
 
     // 1단계: 콘텐츠 등록 (병렬)
     const contentService = new ContentService(c.env, c.executionCtx, siteId);

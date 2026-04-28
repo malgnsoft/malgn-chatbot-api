@@ -69,6 +69,40 @@ export class ChatService {
   }
 
   /**
+   * LLM messages 배열 구성 + role 교차 검증
+   * - 같은 role 연속 시 마지막만 유지 (이전 동일 role 메시지 폐기)
+   * - 첫 메시지가 assistant면 폐기 (user로 시작해야 함)
+   * - 마지막 user 질문 추가 시 직전이 user면 직전 user를 폐기
+   */
+  buildMessagesArray(systemPrompt, chatHistory, currentQuestion) {
+    const messages = [{ role: 'system', content: systemPrompt }];
+    const cleaned = [];
+
+    if (chatHistory && chatHistory.length > 0) {
+      for (const msg of chatHistory) {
+        if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+        // 첫 메시지는 user여야 함
+        if (cleaned.length === 0 && msg.role !== 'user') continue;
+        // 직전과 같은 role이면 직전을 새 것으로 교체
+        if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === msg.role) {
+          cleaned[cleaned.length - 1] = { role: msg.role, content: msg.content };
+        } else {
+          cleaned.push({ role: msg.role, content: msg.content });
+        }
+      }
+    }
+
+    // 마지막이 user면, 현재 질문이 user이므로 직전 user 폐기
+    if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === 'user') {
+      cleaned.pop();
+    }
+
+    messages.push(...cleaned);
+    messages.push({ role: 'user', content: currentQuestion });
+    return messages;
+  }
+
+  /**
    * 세션에 연결된 콘텐츠 ID 목록 + 유효 세션 ID 조회
    * 자식 세션인 경우 부모의 콘텐츠와 부모 세션 ID를 반환
    * @param {number} sessionId - 세션 ID
@@ -525,23 +559,8 @@ export class ChatService {
       quizContext
     });
 
-    // 메시지 배열 구성: system → 이전 대화 → 현재 질문
-    const messages = [
-      { role: 'system', content: systemPrompt }
-    ];
-
-    // 이전 대화 내역 추가
-    if (chatHistory && chatHistory.length > 0) {
-      for (const msg of chatHistory) {
-        messages.push({
-          role: msg.role,
-          content: msg.content
-        });
-      }
-    }
-
-    // 현재 질문 추가
-    messages.push({ role: 'user', content: question });
+    // 메시지 배열 구성: system → 이전 대화 → 현재 질문 (role 교차 검증)
+    const messages = this.buildMessagesArray(systemPrompt, chatHistory, question);
 
     try {
       // Workers AI 사용
@@ -566,7 +585,17 @@ export class ChatService {
           latencyMs: Date.now() - startTime
         }).catch(() => {});
 
-        return this.sanitizeResponse(result.response);
+        // 잘림 감지 → 자동 요약 재생성
+        const finalResponse = await this.handleTruncation({
+          rawResponse: result.response,
+          finishReason: result.finish_reason || result.choices?.[0]?.finish_reason || null,
+          question,
+          systemPrompt,
+          sessionId,
+          lessonId
+        });
+
+        return this.sanitizeResponse(finalResponse);
       }
 
       return '응답을 생성할 수 없습니다.';
@@ -574,6 +603,78 @@ export class ChatService {
       console.error('LLM generation error:', error);
       throw new Error('AI 응답 생성에 실패했습니다.');
     }
+  }
+
+  /**
+   * 응답 잘림 감지 및 자동 요약 재생성
+   * - finish_reason === 'length' 이거나
+   * - 종결 패턴이 없고 길이가 max_tokens 임계치에 가까움 → 잘린 것으로 판정
+   * 잘렸으면 LLM에 요약 재생성 요청 (1회만 시도, 무한 루프 방지)
+   */
+  async handleTruncation({ rawResponse, finishReason, question, systemPrompt, sessionId, lessonId }) {
+    if (!rawResponse) return rawResponse;
+
+    const isTruncated = this.detectTruncation(rawResponse, finishReason);
+    if (!isTruncated) return rawResponse;
+
+    console.log('[ChatService] Response truncated, regenerating as summary...');
+
+    try {
+      const startTime = Date.now();
+      const summaryMessages = [
+        {
+          role: 'system',
+          content: '당신은 학습 답변 편집자입니다. 주어진 초안 답변을 핵심만 담아 간결하게 다시 작성해 주세요.\n규칙:\n- 반드시 max_tokens 안에 끝나도록 작성하세요.\n- 불필요한 반복, 장황한 예시, 부수적인 정보는 줄이세요.\n- 마크다운 구조(글머리표, 헤더)는 유지하되 콘텐츠는 압축하세요.\n- 마지막 문장이 자연스럽게 끝나도록 마무리하세요.\n- 한국어로 답변하세요.'
+        },
+        {
+          role: 'user',
+          content: `원래 질문: ${question}\n\n초안 답변(잘림):\n${rawResponse}\n\n위 초안을 max_tokens 안에 들어오도록 핵심만 담아 자연스럽게 마무리된 형태로 다시 작성해 주세요.`
+        }
+      ];
+
+      const summaryResult = await this.env.AI.run(this.llmModel, {
+        messages: summaryMessages,
+        max_tokens: this.maxTokens,
+        temperature: 0.2,
+        top_p: this.topP
+      }, {
+        gateway: { id: 'malgn-chatbot', skipCache: true }
+      });
+
+      this.aiLogService.log({
+        sessionId,
+        lessonId,
+        requestType: 'chat_summary',
+        model: this.llmModel,
+        usage: summaryResult?.usage || {},
+        latencyMs: Date.now() - startTime
+      }).catch(() => {});
+
+      if (summaryResult && summaryResult.response) {
+        console.log('[ChatService] Summary regenerated, length:', summaryResult.response.length);
+        return summaryResult.response;
+      }
+
+      // 요약 실패 시 원본 반환 (sanitize에서 트리밍됨)
+      return rawResponse;
+    } catch (error) {
+      console.error('[ChatService] Summary regeneration error:', error.message);
+      return rawResponse;
+    }
+  }
+
+  /**
+   * 응답 잘림 감지
+   * 1) finish_reason === 'length' (Workers AI가 제공하는 경우)
+   * 2) 종결 부호/어미가 없음 (sanitize의 endingPattern 재사용)
+   */
+  detectTruncation(text, finishReason) {
+    if (finishReason === 'length' || finishReason === 'max_tokens') return true;
+    if (!text) return false;
+    // 마지막 80자 내에 종결 패턴이 있는지 확인
+    const tail = text.slice(-80).trimEnd();
+    const endingPattern = /([.!?。．！？]|(?:다|요|함|임|됨|음|까|네|군요?|십시오|세요|어요|아요|에요|습니다|습니까|입니다|있습니다|없습니다)\.?)\s*[\)\]"'」』]*\s*$/;
+    return !endingPattern.test(tail);
   }
 
   /**
@@ -616,11 +717,77 @@ export class ChatService {
     // 연속 빈 줄 정리
     result = result.replace(/\n{3,}/g, '\n\n');
 
+    // 3단계: 잘린 답변 자연스럽게 마무리 (max_tokens 한도 대응)
+    result = this.trimTruncatedResponse(result);
+
     if (result.length < 10) {
       return '죄송합니다. 답변을 생성하는 중 문제가 발생했습니다. 다시 질문해 주세요.';
     }
 
     return result;
+  }
+
+  /**
+   * 답변이 단어/문장 중간에서 잘린 경우 마지막 완전한 문장까지만 유지
+   * - 한국어 종결: . ! ? 다. 요. 함. 임. 됨. (괄호/따옴표 닫기 후도 허용)
+   * - 줄 단위로 마지막 완전 줄 탐색 (글머리표/헤더 내부도 종결 검사)
+   * - 잘린 마크다운 강조(**, __) 정리
+   */
+  trimTruncatedResponse(text) {
+    if (!text) return text;
+
+    // 끝에 잘린 마크다운 강조 토큰 제거 (예: "**한글 익" → "")
+    let cleaned = text.replace(/\s*\*{1,2}[^*\n]{0,30}$/, '').replace(/\s*_{1,2}[^_\n]{0,30}$/, '').trimEnd();
+
+    // 글머리표/헤더 마커 제거 후 실제 콘텐츠 추출
+    const stripBulletAndHeader = (line) => {
+      return line
+        .replace(/^\s*#{1,6}\s+/, '')      // 헤더 (# ~ ######)
+        .replace(/^\s*[*\-•]\s+/, '')      // 글머리표 (*, -, •)
+        .replace(/^\s*\d+\.\s+/, '')       // 번호 목록 (1. 2. ...)
+        .trim();
+    };
+
+    // 종결 판정: 문장 부호 또는 한국어 종결 어미 (괄호/따옴표 닫기 허용)
+    const endingPattern = /([.!?。．！？]|(?:다|요|함|임|됨|음|까|네|군요?|십시오|세요|어요|아요|에요|습니다|습니까|입니다|있습니다|없습니다)\.?)\s*[\)\]"'」』』]*\s*$/;
+
+    if (endingPattern.test(cleaned)) {
+      return cleaned;
+    }
+
+    // 줄 단위로 마지막 완전 줄까지 (마지막 줄의 콘텐츠가 종결되지 않으면 폐기)
+    const lines = cleaned.split('\n');
+    while (lines.length > 1) {
+      const last = lines[lines.length - 1];
+      const trimmed = last.trim();
+      if (trimmed.length === 0) {
+        lines.pop();
+        continue;
+      }
+      const innerContent = stripBulletAndHeader(last);
+      // 콘텐츠가 비었으면 (헤더만 있는 경우) 미완성으로 간주
+      if (innerContent.length === 0) {
+        console.log('[Sanitize] Removed empty header/bullet:', trimmed.substring(0, 60));
+        lines.pop();
+        continue;
+      }
+      // 콘텐츠가 종결되면 OK
+      if (endingPattern.test(innerContent)) break;
+      // 미완성 줄 제거
+      console.log('[Sanitize] Removed truncated last line:', trimmed.substring(0, 60));
+      lines.pop();
+    }
+
+    let result = lines.join('\n').trimEnd();
+
+    // 마지막 줄이 헤더(예: "## 한국어 학습 팁")이고 다음 내용이 없으면 헤더도 제거
+    const finalLines = result.split('\n');
+    while (finalLines.length > 0 && /^\s*#{1,6}\s/.test(finalLines[finalLines.length - 1])) {
+      console.log('[Sanitize] Removed orphan header:', finalLines[finalLines.length - 1]);
+      finalLines.pop();
+    }
+
+    return finalLines.join('\n').trimEnd();
   }
 
   /**
@@ -805,13 +972,7 @@ export class ChatService {
       quizContext: quizContext || ''
     });
 
-    const messages = [{ role: 'system', content: systemPrompt }];
-    if (chatHistory && chatHistory.length > 0) {
-      for (const msg of chatHistory) {
-        messages.push({ role: msg.role, content: msg.content });
-      }
-    }
-    messages.push({ role: 'user', content: message });
+    const messages = this.buildMessagesArray(systemPrompt, chatHistory, message);
 
     // 디버그: 프롬프트 크기 로깅
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);

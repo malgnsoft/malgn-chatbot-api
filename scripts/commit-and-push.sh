@@ -1,25 +1,39 @@
+#!/bin/bash
+
+# ============================================
+# 변경사항 커밋 및 푸시 스크립트
+# 사용법:
+#   ./scripts/commit-and-push.sh "커밋 메시지"
+#   ./scripts/commit-and-push.sh               (기본 메시지 사용)
+# ============================================
+
+set -e
+
+# 커밋 메시지 (인자로 전달하거나 기본값 사용)
+MESSAGE=${1:-"chore: commit changes"}
+
 # 1) 상태 확인
+echo "=== Git Status ==="
 git status --short
+echo ""
 
-# 2) 변경 전 차이 확인(선택)
-git diff
+# 변경사항이 없으면 종료
+if [ -z "$(git status --porcelain)" ]; then
+  echo "No changes to commit."
+  exit 0
+fi
 
-# 3) 모든 변경 스테이징
+# 2) 모든 변경 스테이징
 git add -A
 
-# 4) 커밋 (메시지는 상황에 맞게 변경)
-git commit -m "chore: commit changes"
+# 3) 커밋
+git commit -m "$MESSAGE"
 
-# 5) 현재 브랜치 확인
+# 4) 현재 브랜치 확인 및 푸시
 BRANCH=$(git branch --show-current)
-echo "Current branch: $BRANCH"
-
-# 6) 원격이 설정되어 있으면 현재 브랜치로 푸시
+echo ""
+echo "Pushing to origin/$BRANCH..."
 git push origin "$BRANCH"
 
-# 만약 원격이 없으면 (예시)
-# git remote add origin git@github.com:OWNER/REPO.git
-# git push -u origin main
-
-# 만약 인증 토큰으로 푸시해야 하면 (주의: 토큰 노출 주의)
-# git push https://<TOKEN>@github.com/OWNER/REPO.git $BRANCH
+echo ""
+echo "Done! Committed and pushed to $BRANCH."

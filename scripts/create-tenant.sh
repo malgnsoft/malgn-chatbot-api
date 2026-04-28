@@ -11,7 +11,7 @@ TENANT_ID=$1
 
 if [ -z "$TENANT_ID" ]; then
   echo "Usage: ./scripts/create-tenant.sh <tenant_id>"
-  echo "Example: ./scripts/create-tenant.sh user2"
+  echo "Example: ./scripts/create-tenant.sh user3"
   exit 1
 fi
 
@@ -39,9 +39,9 @@ echo "[3/4] Creating R2 Bucket..."
 wrangler r2 bucket create "malgn-chatbot-files-${TENANT_ID}"
 echo ""
 
-# 4. Vectorize Index 생성
+# 4. Vectorize Index 생성 (bge-m3: 1024차원, 코사인 유사도)
 echo "[4/4] Creating Vectorize Index..."
-wrangler vectorize create "malgn-chatbot-vectors-${TENANT_ID}" --dimensions=768 --metric=cosine
+wrangler vectorize create "malgn-chatbot-vectors-${TENANT_ID}" --dimensions=1024 --metric=cosine
 echo ""
 
 echo "============================================"
@@ -85,10 +85,10 @@ echo ""
 echo "1. Copy the above config to wrangler.toml"
 echo ""
 echo "2. Apply D1 schema:"
-echo "   wrangler d1 execute malgn-chatbot-db-${TENANT_ID} --file=./schema.sql"
+echo "   wrangler d1 execute malgn-chatbot-db-${TENANT_ID} --remote --file=./schema.sql --env ${TENANT_ID}"
 echo ""
-echo "3. Set secrets:"
-echo "   wrangler secret put OPENAI_API_KEY --env ${TENANT_ID}"
+echo "3. Set API key secret:"
+echo "   echo 'YOUR_API_KEY' | wrangler secret put API_KEY --env ${TENANT_ID}"
 echo ""
 echo "4. Deploy:"
 echo "   wrangler deploy --env ${TENANT_ID}"

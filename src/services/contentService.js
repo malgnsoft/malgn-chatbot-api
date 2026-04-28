@@ -150,7 +150,8 @@ export class ContentService {
       }
 
       const contentType = response.headers.get('content-type') || '';
-      const urlLower = url.toLowerCase();
+      // 쿼리스트링 제거 후 확장자 체크
+      const urlLower = url.split('?')[0].toLowerCase();
 
       // 자막 파일 확인 (URL 확장자 또는 content-type)
       const isSubtitle = urlLower.endsWith('.srt') ||

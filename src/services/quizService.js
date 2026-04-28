@@ -63,16 +63,18 @@ export class QuizService {
 
     const quizzes = [];
 
-    // 4지선다 퀴즈 생성 (요청 수만큼만 사용)
+    // 4지선다 퀴즈 생성 + 정답 검증
     if (choiceCount > 0) {
-      const choiceQuizzes = await this.generateChoiceQuizzes(content, choiceCount, difficulty);
-      quizzes.push(...choiceQuizzes.slice(0, choiceCount));
+      let choiceQuizzes = await this.generateChoiceQuizzes(content, choiceCount, difficulty);
+      choiceQuizzes = await this.verifyChoiceQuizzes(choiceQuizzes.slice(0, choiceCount));
+      quizzes.push(...choiceQuizzes);
     }
 
-    // OX 퀴즈 생성 (요청 수만큼만 사용)
+    // OX 퀴즈 생성 + 정답 검증
     if (oxCount > 0) {
-      const oxQuizzes = await this.generateOXQuizzes(content, oxCount, difficulty);
-      quizzes.push(...oxQuizzes.slice(0, oxCount));
+      let oxQuizzes = await this.generateOXQuizzes(content, oxCount, difficulty);
+      oxQuizzes = await this.verifyOXQuizzes(oxQuizzes.slice(0, oxCount));
+      quizzes.push(...oxQuizzes);
     }
 
     // DB에 저장
@@ -251,6 +253,111 @@ export class QuizService {
       console.log('[QuizService] fixJsonLatex applied, diff chars:', fixed.length - jsonStr.length);
     }
     return fixed;
+  }
+
+  /**
+   * 4지선다 퀴즈 정답 검증 (LLM 기반)
+   * 생성된 퀴즈의 answer가 실제 정답과 일치하는지 검증 후 수정
+   */
+  async verifyChoiceQuizzes(quizzes) {
+    if (!quizzes || quizzes.length === 0) return quizzes;
+
+    const quizList = quizzes.map((q, i) => {
+      const options = JSON.parse(q.options);
+      return `[퀴즈 ${i + 1}]
+질문: ${q.question}
+선택지: ${options.map((o, j) => `${j + 1}. ${o}`).join(' / ')}
+현재 정답: ${q.answer}
+해설: ${q.explanation}`;
+    }).join('\n\n');
+
+    const systemPrompt = `당신은 퀴즈 검증 전문가입니다. 각 퀴즈의 해설을 읽고, 해설에 따른 올바른 정답 번호를 확인하세요.
+
+반드시 아래 JSON 형식으로만 응답하세요:
+[{"quiz": 1, "correct_answer": 2}, {"quiz": 2, "correct_answer": 1}]
+
+규칙:
+1. 해설의 결론과 선택지를 비교하여 올바른 정답 번호를 판단하세요.
+2. 현재 정답이 맞으면 그대로 반환하세요.
+3. JSON 배열만 출력하세요.`;
+
+    try {
+      const content = await this.callWorkersAI(systemPrompt, quizList, 'quiz_verify');
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return quizzes;
+
+      const corrections = JSON.parse(jsonMatch[0]);
+      let fixCount = 0;
+
+      for (const c of corrections) {
+        const idx = c.quiz - 1;
+        if (idx >= 0 && idx < quizzes.length) {
+          const newAnswer = String(c.correct_answer);
+          if (newAnswer !== quizzes[idx].answer && ['1','2','3','4'].includes(newAnswer)) {
+            console.log(`[QuizService] Answer corrected: Q${c.quiz} ${quizzes[idx].answer} → ${newAnswer}`);
+            quizzes[idx].answer = newAnswer;
+            fixCount++;
+          }
+        }
+      }
+
+      console.log(`[QuizService] Verified ${quizzes.length} quizzes, corrected ${fixCount}`);
+      return quizzes;
+    } catch (error) {
+      console.error('[QuizService] Quiz verification error:', error.message);
+      return quizzes; // 검증 실패 시 원본 반환
+    }
+  }
+
+  /**
+   * OX 퀴즈 정답 검증 (LLM 기반)
+   */
+  async verifyOXQuizzes(quizzes) {
+    if (!quizzes || quizzes.length === 0) return quizzes;
+
+    const quizList = quizzes.map((q, i) => {
+      return `[퀴즈 ${i + 1}]
+서술문: ${q.question}
+현재 정답: ${q.answer}
+해설: ${q.explanation}`;
+    }).join('\n\n');
+
+    const systemPrompt = `당신은 퀴즈 검증 전문가입니다. 각 OX 퀴즈의 해설을 읽고, 서술문이 참(O)인지 거짓(X)인지 확인하세요.
+
+반드시 아래 JSON 형식으로만 응답하세요:
+[{"quiz": 1, "correct_answer": "O"}, {"quiz": 2, "correct_answer": "X"}]
+
+규칙:
+1. 해설의 내용을 기반으로 서술문의 참/거짓을 판단하세요.
+2. 현재 정답이 맞으면 그대로 반환하세요.
+3. JSON 배열만 출력하세요.`;
+
+    try {
+      const content = await this.callWorkersAI(systemPrompt, quizList, 'quiz_verify');
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return quizzes;
+
+      const corrections = JSON.parse(jsonMatch[0]);
+      let fixCount = 0;
+
+      for (const c of corrections) {
+        const idx = c.quiz - 1;
+        if (idx >= 0 && idx < quizzes.length) {
+          const newAnswer = c.correct_answer;
+          if ((newAnswer === 'O' || newAnswer === 'X') && newAnswer !== quizzes[idx].answer) {
+            console.log(`[QuizService] OX Answer corrected: Q${c.quiz} ${quizzes[idx].answer} → ${newAnswer}`);
+            quizzes[idx].answer = newAnswer;
+            fixCount++;
+          }
+        }
+      }
+
+      console.log(`[QuizService] Verified ${quizzes.length} OX quizzes, corrected ${fixCount}`);
+      return quizzes;
+    } catch (error) {
+      console.error('[QuizService] OX quiz verification error:', error.message);
+      return quizzes;
+    }
   }
 
   /**

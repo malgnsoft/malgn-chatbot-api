@@ -211,8 +211,17 @@ chat.post('/stream', async (c) => {
         await stream.writeSSE({ event: 'token', data: JSON.stringify({ response: fullResponse }) });
       }
 
-      // 후처리: garbled text 필터링
-      const sanitized = chatService.sanitizeResponse(fullResponse);
+      // 후처리: 잘림 감지 → 자동 요약 (필요 시) → garbled 필터링
+      const systemPrompt = prepared.messages.find(m => m.role === 'system')?.content || '';
+      const finalRaw = await chatService.handleTruncation({
+        rawResponse: fullResponse,
+        finishReason: null, // 스트리밍은 finish_reason 미제공
+        question: message.trim(),
+        systemPrompt,
+        sessionId: prepared.sessionId,
+        lessonId: prepared.lessonId
+      });
+      const sanitized = chatService.sanitizeResponse(finalRaw);
 
       // 완료 이벤트 전송 (정제된 전체 응답 포함)
       await stream.writeSSE({ event: 'done', data: JSON.stringify({
