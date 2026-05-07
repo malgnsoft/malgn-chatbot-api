@@ -98,7 +98,7 @@ vars = { ENVIRONMENT = "production", TENANT_ID = "cloud" }
 
 [env.cloud.ai]
 binding = "AI"
-gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
+gateway = { id = "malgn-chatbot-cloud", cache_ttl = 3600 }
 
 [[env.cloud.hyperdrive]]
 binding = "HYPERDRIVE"
