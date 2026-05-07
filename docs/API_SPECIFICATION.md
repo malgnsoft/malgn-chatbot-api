@@ -10,7 +10,7 @@
 |------|-----|
 | Base URL (개발) | `http://localhost:8787` |
 | Base URL (user1) | `https://malgn-chatbot-api-user1.<account>.workers.dev` |
-| Base URL (user2) | `https://malgn-chatbot-api-user2.<account>.workers.dev` |
+| Base URL (cloud) | `https://malgn-chatbot-api-cloud.<account>.workers.dev` |
 | 응답 형식 | JSON |
 | 인증 | Bearer 토큰 (`Authorization: Bearer {API_KEY}`) |
 | API 문서 | `GET /docs` (Swagger UI) |

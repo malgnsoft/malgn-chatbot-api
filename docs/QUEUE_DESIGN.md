@@ -1,5 +1,12 @@
 # Cloudflare Queues 설계 문서
 
+> **⚠️ DEPRECATED (2026-04 폐기)**
+>
+> 본 문서에서 설계한 Cloudflare Queues 방식은 운영 환경에서 시행착오 끝에 폐기되었습니다.
+> 최종 결정: **PostgreSQL/MySQL 동기 호출 + `executionCtx.waitUntil()` 백그라운드 처리** (Queue 미사용).
+> 본 문서는 시행착오 기록 보존을 위해 남겨두며, 활성 인프라 설계가 아닙니다.
+> 자세한 경위는 docs/history/20260427.md 참고.
+
 ## 1. 배경
 
 LMS에서 `POST /sessions/create-with-contents`를 **동시에 여러 개** 호출하여 세션을 일괄 생성합니다.

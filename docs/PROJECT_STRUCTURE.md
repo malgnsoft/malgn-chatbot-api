@@ -37,12 +37,12 @@
                 │          │          │          │
         ┌───────┘    ┌─────┘    ┌─────┘    ┌────┘
         ▼            ▼          ▼          ▼
-┌────────────┐ ┌──────────┐ ┌───────┐ ┌───────┐
-│ Workers AI │ │Vectorize │ │  D1   │ │  KV   │
-│ (LLM +    │ │(벡터검색)│ │(SQLite)│ │(캐시) │
-│ 임베딩 +  │ │ 768차원  │ │       │ │24h TTL│
-│ AI Gateway)│ │코사인유사│ │       │ │       │
-└────────────┘ └──────────┘ └───────┘ └───────┘
+┌────────────┐ ┌──────────┐ ┌────────────┐ ┌───────┐
+│ Workers AI │ │Vectorize │ │ Hyperdrive │ │  KV   │
+│ (LLM +    │ │(벡터검색)│ │ → Aurora   │ │(캐시) │
+│ 임베딩 +  │ │ 1024차원 │ │   MySQL    │ │24h TTL│
+│ AI Gateway)│ │코사인유사│ │            │ │       │
+└────────────┘ └──────────┘ └────────────┘ └───────┘
 ```
 
 ---
@@ -89,7 +89,7 @@ Projects/
 │   │   ├── services/
 │   │   │   ├── chatService.js      # RAG 파이프라인 + LLM 응답 생성
 │   │   │   ├── contentService.js   # 콘텐츠 업로드, 텍스트 추출, 임베딩
-│   │   │   ├── embeddingService.js # 텍스트→벡터 변환 (768차원)
+│   │   │   ├── embeddingService.js # 텍스트→벡터 변환 (1024차원)
 │   │   │   ├── learningService.js  # 학습 메타데이터 생성 (목표/요약/추천질문)
 │   │   │   ├── quizService.js      # 퀴즈 생성 (4지선다 + OX)
 │   │   │   ├── openaiService.js    # OpenAI 연동 (선택적)
@@ -100,16 +100,25 @@ Projects/
 │   │   └── utils/
 │   │       └── utils.js            # 유틸리티 함수
 │   ├── migrations/
-│   │   ├── 001_quiz_content_based.sql    # 퀴즈 콘텐츠 기반 전환
-│   │   ├── 002_session_course_fields.sql # 세션 LMS 연동 필드
-│   │   └── 003_session_parent_id.sql     # 부모-자식 세션
-│   ├── schema.sql              # 전체 DB 스키마
+│   │   ├── 001_quiz_content_based.sql      # TB_QUIZ 콘텐츠 기반 리팩토링
+│   │   ├── 002_session_course_fields.sql   # course_id, course_user_id, lesson_id 추가
+│   │   ├── 003_session_parent_id.sql       # parent_id 추가 (부모-자식 세션)
+│   │   ├── 004_content_lesson_id.sql       # TB_CONTENT에 lesson_id 추가
+│   │   ├── 005_session_quiz_difficulty.sql # quiz_difficulty (easy/normal/hard)
+│   │   ├── 005_session_quiz_split.sql      # 퀴즈 설정 분리 (choice_count/ox_count)
+│   │   ├── 006_quiz_session_id.sql         # TB_QUIZ에 session_id 추가
+│   │   ├── 006_session_generation_status.sql # 세션 generation_status 추가
+│   │   ├── 007_session_chat_content_ids.sql # 세션별 chat_content_ids 추가
+│   │   ├── 008_add_site_id.sql             # 멀티사이트 site_id 추가
+│   │   ├── 009_ai_log.sql                  # TB_AI_LOG 추가
+│   │   └── 010_ai_log_lesson_id.sql        # TB_AI_LOG content_id → lesson_id
+│   ├── schema.mysql.sql        # 전체 Aurora MySQL 스키마
 │   ├── wrangler.toml           # 멀티테넌트 Cloudflare 설정
 │   ├── package.json            # Hono, pdf-parse, unpdf, jose, @hono/swagger-ui
 │   └── docs/                   # API 문서
 │
 ├── malgn-chatbot-user1/        # user1 테넌트 프론트엔드 배포본
-└── malgn-chatbot-user2/        # user2 테넌트 프론트엔드 배포본
+└── malgn-chatbot-cloud/        # cloud 테넌트 프론트엔드 배포본
 ```
 
 ---
@@ -139,9 +148,9 @@ API 엔드포인트를 정의하는 폴더입니다.
 |------|------|
 | `chatService.js` | RAG 파이프라인: 벡터 검색 → 컨텍스트 구축 → LLM 응답 생성 |
 | `contentService.js` | 콘텐츠 업로드, PDF/SRT/VTT 텍스트 추출, 청크 분할, 임베딩 저장 |
-| `embeddingService.js` | 텍스트→768차원 벡터 변환, 청크 분할 (500자, 100자 오버랩) |
-| `learningService.js` | 학습 목표/요약/추천질문 자동 생성 (Llama 3.1 70B) |
-| `quizService.js` | 4지선다 + OX 퀴즈 자동 생성 (Llama 3.1 70B) |
+| `embeddingService.js` | 텍스트→1024차원 벡터 변환, 청크 분할 (500자, 100자 오버랩) |
+| `learningService.js` | 학습 목표/요약/추천질문 자동 생성 (Gemma 3 12B) |
+| `quizService.js` | 4지선다 + OX 퀴즈 자동 생성 (Gemma 3 12B) |
 | `openaiService.js` | OpenAI API 연동 (선택적 대안) |
 | `userService.js` | 사용자 관리 (미사용) |
 
@@ -222,12 +231,12 @@ export class ChatService {
                                     ↓
                     ┌───────────────┼────────────────┐
                     ↓               ↓                ↓
-              텍스트 추출      D1 저장          EmbeddingService
+              텍스트 추출      MySQL 저장       EmbeddingService
               (PDF: unpdf,   (TB_CONTENT)     (청크 분할 500자,
                SRT/VTT 등)                    100자 오버랩)
                                                     ↓
                                               Vectorize 저장
-                                              (768차원 벡터)
+                                              (1024차원 벡터)
                                                     ↓
                                            [백그라운드] 퀴즈 생성
                                            (executionCtx.waitUntil)
@@ -242,7 +251,7 @@ export class ChatService {
                     ↓
             [백그라운드] LearningService
               ├── 콘텐츠 텍스트 수집
-              ├── Llama 3.1 70B로 학습 목표/요약/추천질문 생성
+              ├── Gemma 3 12B로 학습 목표/요약/추천질문 생성
               └── TB_SESSION에 저장
 
 학습자 → 세션 생성 (parent_id=교수자세션ID, courseUserId)
@@ -259,7 +268,7 @@ export class ChatService {
     ▼
 [1단계 병렬 처리] ─── Promise.all ───
     ├── 세션 콘텐츠 ID 조회 (parent_id 처리)
-    ├── 질문 임베딩 (768차원 벡터 변환)
+    ├── 질문 임베딩 (1024차원 벡터 변환)
     └── 세션 학습 데이터 조회 (DB 직접)
     │
     ▼
@@ -278,7 +287,7 @@ export class ChatService {
     └── <quiz_info>         : 퀴즈 정답 정보
     │
     ▼
-[4단계] LLM 호출 (Llama 3.1 8B via AI Gateway)
+[4단계] LLM 호출 (Gemma 3 12B via AI Gateway)
     messages = [system, ...history, user]
     │
     ▼
@@ -293,11 +302,11 @@ export class ChatService {
 
 | 테넌트 | 환경 | Workers 이름 | DB |
 |--------|------|-------------|-----|
-| dev | 로컬 개발 | malgn-chatbot-api | malgn-chatbot-db |
-| user1 | 프로덕션 | malgn-chatbot-api-user1 | malgn-chatbot-db (dev와 공유) |
-| user2 | 프로덕션 | malgn-chatbot-api-user2 | malgn-chatbot-db-user2 (독립) |
+| dev | 로컬 개발 | malgn-chatbot-api | Aurora MySQL (Hyperdrive) |
+| user1 | 프로덕션 | malgn-chatbot-api-user1 | Aurora MySQL (dev와 공유) |
+| cloud | 프로덕션 | malgn-chatbot-api-cloud | Aurora MySQL (전용 인스턴스, 독립) |
 
-각 테넌트별 독립 리소스: D1, KV, R2, Vectorize, AI Gateway
+각 테넌트별 독립 리소스: Aurora MySQL DB, KV, R2, Vectorize, AI Gateway
 
 ---
 

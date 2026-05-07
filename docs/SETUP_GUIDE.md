@@ -83,7 +83,7 @@ git clone <your-repo-url> malgn-chatbot
 
 # 테넌트별 프론트엔드 (선택)
 git clone <your-repo-url> malgn-chatbot-user1
-git clone <your-repo-url> malgn-chatbot-user2
+git clone <your-repo-url> malgn-chatbot-cloud
 ```
 
 ---
@@ -122,10 +122,10 @@ TENANT_ID = "dev"
 binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
-[[d1_databases]]
-binding = "DB"
-database_name = "malgn-chatbot-db"
-database_id = "your-database-id"
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "your-hyperdrive-config-id"
+# Hyperdrive는 Aurora MySQL connection string을 풀링/가속
 
 [[kv_namespaces]]
 binding = "KV"
@@ -145,12 +145,16 @@ index_name = "malgn-chatbot-vectors"
 기존 리소스를 사용하지 않는 경우에만 실행합니다.
 
 ```bash
-# D1 데이터베이스 생성
-wrangler d1 create malgn-chatbot-db
-# → database_id 메모
+# Aurora MySQL 인스턴스 생성 (AWS 콘솔 또는 CLI)
+# - AWS RDS Aurora MySQL 호환 클러스터를 생성하고 엔드포인트/계정 메모
 
-# Vectorize 인덱스 생성 (768차원, 코사인 유사도)
-wrangler vectorize create malgn-chatbot-vectors --dimensions=768 --metric=cosine
+# Hyperdrive 구성 생성 (위에서 만든 MySQL connection string 사용)
+wrangler hyperdrive create malgn-chatbot-hyperdrive \
+  --connection-string="mysql://<USER>:<PASSWORD>@<HOST>:3306/<DATABASE>"
+# → id 메모 (wrangler.toml [[hyperdrive]] id에 입력)
+
+# Vectorize 인덱스 생성 (1024차원, 코사인 유사도)
+wrangler vectorize create malgn-chatbot-vectors --dimensions=1024 --metric=cosine
 
 # KV 네임스페이스 생성
 wrangler kv namespace create malgn-chatbot-kv
@@ -162,16 +166,25 @@ wrangler r2 bucket create malgn-chatbot-files
 
 메모한 ID를 `wrangler.toml`에 입력합니다.
 
-### 4.4 D1 스키마 적용
+### 4.4 DB 스키마 적용 (Aurora MySQL)
 
 ```bash
 # 전체 스키마 적용 (신규 DB)
-wrangler d1 execute malgn-chatbot-db --file=./schema.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < schema.mysql.sql
 
 # 개별 마이그레이션 (기존 DB 업데이트 시)
-wrangler d1 execute malgn-chatbot-db --file=./migrations/001_quiz_content_based.sql
-wrangler d1 execute malgn-chatbot-db --file=./migrations/002_session_course_fields.sql
-wrangler d1 execute malgn-chatbot-db --file=./migrations/003_session_parent_id.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/001_quiz_content_based.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/002_session_course_fields.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/003_session_parent_id.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/004_content_lesson_id.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/005_session_quiz_difficulty.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/005_session_quiz_split.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/006_quiz_session_id.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/006_session_generation_status.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/007_session_chat_content_ids.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/008_add_site_id.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/009_ai_log.sql
+mysql -h <HOST> -u <USER> -p <DATABASE> < migrations/010_ai_log_lesson_id.sql
 ```
 
 ### 4.5 환경 변수 설정
@@ -190,7 +203,7 @@ EOF
 ```bash
 # 테넌트별 API Key 설정
 wrangler secret put API_KEY --env user1
-wrangler secret put API_KEY --env user2
+wrangler secret put API_KEY --env cloud
 ```
 
 ---
@@ -281,7 +294,7 @@ npx wrangler pages dev . --port 8788
 |------|----------|---------|---------|
 | 로컬 개발 | `localhost:8788` | `localhost:8787` | `localhost:8787/docs` |
 | user1 (프로덕션) | `malgn-chatbot.pages.dev` | `malgn-chatbot-api-user1.workers.dev` | `/docs` |
-| user2 (프로덕션) | `malgn-chatbot-user2.pages.dev` | `malgn-chatbot-api-user2.workers.dev` | `/docs` |
+| cloud (프로덕션) | `malgn-chatbot-cloud.pages.dev` | `malgn-chatbot-api-cloud.workers.dev` | `/docs` |
 
 ---
 
@@ -295,8 +308,8 @@ cd ~/Projects/malgn-chatbot-api
 # user1 테넌트 배포
 wrangler deploy --env user1
 
-# user2 테넌트 배포
-wrangler deploy --env user2
+# cloud 테넌트 배포
+wrangler deploy --env cloud
 ```
 
 ### Frontend 배포 (Cloudflare Pages)
@@ -311,15 +324,15 @@ npm run build
 wrangler pages deploy . --project-name=malgn-chatbot --commit-dirty=true --commit-message="deploy"
 ```
 
-### D1 마이그레이션 (테넌트별)
+### DB 마이그레이션 (테넌트별)
 
 ```bash
-# user1 (dev와 DB 공유이므로 별도 불필요)
+# user1 (dev와 Aurora MySQL 공유이므로 별도 불필요)
 
-# user2 (독립 DB)
-wrangler d1 execute malgn-chatbot-db-user2 --file=./schema.sql --env user2
+# cloud (전용 Aurora MySQL 인스턴스)
+mysql -h <CLOUD_HOST> -u <USER> -p <DATABASE> < schema.mysql.sql
 # 또는 개별 마이그레이션
-wrangler d1 execute malgn-chatbot-db-user2 --file=./migrations/003_session_parent_id.sql --env user2
+mysql -h <CLOUD_HOST> -u <USER> -p <DATABASE> < migrations/003_session_parent_id.sql
 ```
 
 ---
@@ -331,8 +344,12 @@ wrangler d1 execute malgn-chatbot-db-user2 --file=./migrations/003_session_paren
 ```bash
 # <tenant_id>를 실제 테넌트 ID로 치환
 
-# D1 데이터베이스
-wrangler d1 create malgn-chatbot-db-<tenant_id>
+# Aurora MySQL 인스턴스 생성 (AWS RDS)
+# - 테넌트별 전용 인스턴스 또는 데이터베이스 추가
+
+# Hyperdrive 구성 (테넌트별)
+wrangler hyperdrive create malgn-chatbot-hyperdrive-<tenant_id> \
+  --connection-string="mysql://<USER>:<PASSWORD>@<HOST>:3306/<DATABASE>"
 
 # KV 네임스페이스
 wrangler kv namespace create malgn-chatbot-kv-<tenant_id>
@@ -340,8 +357,8 @@ wrangler kv namespace create malgn-chatbot-kv-<tenant_id>
 # R2 버킷
 wrangler r2 bucket create malgn-chatbot-files-<tenant_id>
 
-# Vectorize 인덱스
-wrangler vectorize create malgn-chatbot-vectors-<tenant_id> --dimensions=768 --metric=cosine
+# Vectorize 인덱스 (1024차원)
+wrangler vectorize create malgn-chatbot-vectors-<tenant_id> --dimensions=1024 --metric=cosine
 ```
 
 ### 8.2 wrangler.toml에 환경 섹션 추가
@@ -355,10 +372,10 @@ vars = { ENVIRONMENT = "production", TENANT_ID = "<tenant_id>" }
 binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
-[[env.<tenant_id>.d1_databases]]
-binding = "DB"
-database_name = "malgn-chatbot-db-<tenant_id>"
-database_id = "생성된-database-id"
+[[env.<tenant_id>.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "생성된-hyperdrive-config-id"
+# Aurora MySQL connection string은 hyperdrive 구성에 저장됨
 
 [[env.<tenant_id>.kv_namespaces]]
 binding = "KV"
@@ -376,7 +393,7 @@ index_name = "malgn-chatbot-vectors-<tenant_id>"
 ### 8.3 스키마 적용
 
 ```bash
-wrangler d1 execute malgn-chatbot-db-<tenant_id> --file=./schema.sql
+mysql -h <TENANT_HOST> -u <USER> -p <DATABASE> < schema.mysql.sql
 ```
 
 ### 8.4 시크릿 설정
@@ -408,13 +425,14 @@ cat .dev.vars
 curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8787/contents
 ```
 
-#### 2. "D1 database not found"
+#### 2. "Hyperdrive binding not configured" 또는 MySQL 연결 실패
 
 ```bash
-# 데이터베이스 목록 확인
-wrangler d1 list
+# Hyperdrive 구성 목록 확인
+wrangler hyperdrive list
 
-# wrangler.toml의 database_id 확인
+# wrangler.toml의 [[hyperdrive]] id 확인
+# Aurora MySQL 보안 그룹에서 Cloudflare egress IP 허용 확인
 ```
 
 #### 3. "Vectorize index not found"
@@ -423,8 +441,8 @@ wrangler d1 list
 # 인덱스 목록 확인
 wrangler vectorize list
 
-# 없으면 생성 (768차원, 코사인)
-wrangler vectorize create malgn-chatbot-vectors --dimensions=768 --metric=cosine
+# 없으면 생성 (1024차원, 코사인)
+wrangler vectorize create malgn-chatbot-vectors --dimensions=1024 --metric=cosine
 ```
 
 #### 4. "CORS 에러" (브라우저에서)
@@ -466,11 +484,11 @@ wrangler --version
 # Cloudflare 계정 정보
 wrangler whoami
 
-# D1 데이터 조회
-wrangler d1 execute malgn-chatbot-db --command="SELECT COUNT(*) FROM TB_CONTENT WHERE status = 1"
+# Aurora MySQL 데이터 조회 (mysql 클라이언트 사용)
+mysql -h <HOST> -u <USER> -p <DATABASE> -e "SELECT COUNT(*) FROM TB_CONTENT WHERE status = 1"
 
-# D1 원격 DB 조회
-wrangler d1 execute malgn-chatbot-db --command="SELECT * FROM TB_SESSION WHERE status = 1" --remote
+# 세션 조회
+mysql -h <HOST> -u <USER> -p <DATABASE> -e "SELECT * FROM TB_SESSION WHERE status = 1 LIMIT 10"
 ```
 
 ---
@@ -481,11 +499,12 @@ wrangler d1 execute malgn-chatbot-db --command="SELECT * FROM TB_SESSION WHERE s
 - [ ] Node.js 18+ 설치됨
 - [ ] Wrangler CLI 설치됨
 - [ ] Cloudflare 로그인 완료
-- [ ] D1 데이터베이스 생성됨
-- [ ] Vectorize 인덱스 생성됨 (768차원, cosine)
+- [ ] Aurora MySQL 인스턴스 생성됨
+- [ ] Hyperdrive 구성 생성됨 (Aurora MySQL 연결)
+- [ ] Vectorize 인덱스 생성됨 (1024차원, cosine)
 - [ ] KV 네임스페이스 생성됨
 - [ ] wrangler.toml에 리소스 ID 입력됨
-- [ ] schema.sql 실행됨
+- [ ] schema.mysql.sql 실행됨
 - [ ] .dev.vars에 API_KEY 설정됨
 - [ ] npm install 완료
 - [ ] 로컬에서 `/health` 테스트 완료
@@ -493,7 +512,7 @@ wrangler d1 execute malgn-chatbot-db --command="SELECT * FROM TB_SESSION WHERE s
 ### 배포 전
 - [ ] 임베드 위젯 빌드 (`npm run build`)
 - [ ] 테넌트별 API_KEY 시크릿 설정됨
-- [ ] 테넌트별 D1 마이그레이션 적용됨
+- [ ] 테넌트별 Aurora MySQL 마이그레이션 적용됨
 - [ ] `wrangler deploy --env <tenant_id>` 성공
 
 ---
@@ -502,7 +521,8 @@ wrangler d1 execute malgn-chatbot-db --command="SELECT * FROM TB_SESSION WHERE s
 
 - [Cloudflare Workers 문서](https://developers.cloudflare.com/workers/)
 - [Wrangler CLI 문서](https://developers.cloudflare.com/workers/wrangler/)
-- [D1 문서](https://developers.cloudflare.com/d1/)
+- [Hyperdrive 문서](https://developers.cloudflare.com/hyperdrive/)
+- [AWS RDS Aurora MySQL](https://aws.amazon.com/rds/aurora/)
 - [Vectorize 문서](https://developers.cloudflare.com/vectorize/)
 - [Workers AI 문서](https://developers.cloudflare.com/workers-ai/)
 - [AI Gateway 문서](https://developers.cloudflare.com/ai-gateway/)

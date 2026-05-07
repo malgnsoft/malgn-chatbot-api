@@ -238,28 +238,30 @@ Cloudflare 바인딩은 `c.env` 또는 `this.env`에서 직접 사용합니다.
 ### AI (Workers AI)
 
 ```javascript
-// 채팅 LLM (8B - 빠른 응답)
-const response = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+// 채팅 LLM (Gemma 3 12B - 다국어/추론 균형)
+const response = await this.env.AI.run('@cf/google/gemma-3-12b-it', {
   messages: [{ role: 'system', content: systemPrompt }, ...],
   temperature: 0.3,
   top_p: 0.3,
   max_tokens: 1024
 });
 
-// 학습/퀴즈 LLM (70B - 고품질, AI Gateway 캐시)
-const response = await this.env.AI.run('@cf/meta/llama-3.1-70b-instruct', {
+// 학습/퀴즈 LLM (동일 모델, AI Gateway 캐시)
+const response = await this.env.AI.run('@cf/google/gemma-3-12b-it', {
   messages: [...],
   temperature: 0.3
 }, { gateway: { id: 'malgn-chatbot', cacheTtl: 3600 } });
 
-// 임베딩 (768차원)
-const result = await this.env.AI.run('@cf/baai/bge-base-en-v1.5', {
+// 임베딩 (1024차원, 다국어)
+const result = await this.env.AI.run('@cf/baai/bge-m3', {
   text: [inputText]
 });
 const vector = result.data[0];  // [0.012, -0.034, ...]
 ```
 
-### D1 (SQLite Database)
+### Aurora MySQL (Hyperdrive 경유)
+
+> 코드의 `this.env.DB` 변수명은 그대로 유지되지만 실제 바인딩 대상은 Hyperdrive를 통한 Aurora MySQL 커넥션을 래핑한 헬퍼입니다. 본 프로젝트에서는 자체 DB 헬퍼(`db.execute`/`db.first`/`db.all`)를 통해 D1과 유사한 인터페이스를 제공합니다.
 
 ```javascript
 // 단일 행 조회
@@ -288,7 +290,7 @@ const newId = result.meta.last_row_id;
 // 벡터 저장
 await this.env.VECTORIZE.upsert([{
   id: `content-${contentId}-chunk-${index}`,
-  values: embeddingVector,  // 768차원 float 배열
+  values: embeddingVector,  // 1024차원 float 배열
   metadata: { type: 'content', contentId, text: chunkText }
 }]);
 
@@ -370,7 +372,7 @@ API_KEY=your-api-key-here
 
 ```bash
 wrangler secret put API_KEY --env user1
-wrangler secret put API_KEY --env user2
+wrangler secret put API_KEY --env cloud
 ```
 
 ### 환경 변수 접근
@@ -385,7 +387,7 @@ constructor(env) {
 
 // 라우트에서 직접
 const environment = c.env.ENVIRONMENT;  // 'development' | 'production'
-const tenantId = c.env.TENANT_ID;       // 'dev' | 'user1' | 'user2'
+const tenantId = c.env.TENANT_ID;       // 'dev' | 'user1' | 'cloud'
 ```
 
 ---
@@ -434,7 +436,7 @@ const tenantId = c.env.TENANT_ID;       // 'dev' | 'user1' | 'user2'
 ```
 [1단계 병렬] Promise.all
   ├── 세션 콘텐츠 ID 조회 (parent_id 처리)
-  ├── 질문 임베딩 (768차원)
+  ├── 질문 임베딩 (1024차원)
   └── 세션 학습 데이터 조회 (DB 직접)
 
 [2단계 병렬] Promise.all
@@ -450,7 +452,7 @@ const tenantId = c.env.TENANT_ID;       // 'dev' | 'user1' | 'user2'
   ├── <reference_documents> — RAG 검색 결과
   └── <quiz_info> — 퀴즈 정답 정보
 
-[4단계] LLM 호출 (Llama 3.1 8B)
+[4단계] LLM 호출 (Gemma 3 12B)
 
 [5단계] 메시지 저장 + 응답 반환
 ```
@@ -549,6 +551,7 @@ export class NewFeatureService {
 
 - [Cloudflare Workers 문서](https://developers.cloudflare.com/workers/)
 - [Hono 문서](https://hono.dev/)
-- [Cloudflare D1 문서](https://developers.cloudflare.com/d1/)
+- [Cloudflare Hyperdrive 문서](https://developers.cloudflare.com/hyperdrive/)
+- [AWS RDS Aurora MySQL](https://aws.amazon.com/rds/aurora/)
 - [Cloudflare Vectorize 문서](https://developers.cloudflare.com/vectorize/)
 - [Cloudflare AI Gateway 문서](https://developers.cloudflare.com/ai-gateway/)

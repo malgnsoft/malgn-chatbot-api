@@ -14,11 +14,11 @@
 |------|------|------|
 | Backend | Cloudflare Workers + Hono | 서버리스 API |
 | Frontend | Cloudflare Pages + Vanilla JS | 관리자 대시보드 + 임베드 위젯 |
-| LLM (채팅) | Workers AI `@cf/meta/llama-3.1-8b-instruct` | RAG 기반 응답 생성 |
-| LLM (학습/퀴즈) | Workers AI `@cf/meta/llama-3.1-70b-instruct` | 메타데이터/퀴즈 생성 |
-| Embedding | Workers AI `@cf/baai/bge-base-en-v1.5` | 768차원 벡터 변환 |
-| Vector DB | Cloudflare Vectorize | 코사인 유사도 검색 |
-| Database | Cloudflare D1 (SQLite) | 메타데이터 저장 |
+| LLM (채팅) | Workers AI `@cf/google/gemma-3-12b-it` | RAG 기반 응답 생성 |
+| LLM (학습/퀴즈) | Workers AI `@cf/google/gemma-3-12b-it` | 메타데이터/퀴즈 생성 |
+| Embedding | Workers AI `@cf/baai/bge-m3` | 1024차원 벡터 변환 (다국어) |
+| Vector DB | Cloudflare Vectorize | 1024차원, 코사인 유사도 검색 |
+| Database | Aurora MySQL (Cloudflare Hyperdrive 경유) | 메타데이터 저장 |
 | Storage | Cloudflare R2 | 원본 파일 저장 (예약) |
 | Cache | Cloudflare KV | 세션 캐시 (24시간 TTL) |
 | AI Gateway | Cloudflare AI Gateway | 캐시 3600s, 모니터링 |
@@ -42,7 +42,7 @@
 - 콘텐츠 CRUD: 목록, 상세, 수정, 삭제
 
 #### 3. 임베딩 시스템
-- Workers AI `@cf/baai/bge-base-en-v1.5` (768차원)
+- Workers AI `@cf/baai/bge-m3` (1024차원, 다국어)
 - 청크 분할: 500자 단위, 100자 오버랩, 문장 경계 기준
 - Vectorize ID 규칙: `content-{contentId}-chunk-{index}`
 - 콘텐츠 등록 시 자동 임베딩 저장
@@ -64,7 +64,7 @@
 ### Phase 2: 학습 기능 고도화
 
 #### 6. 학습 메타데이터 자동 생성
-- `learningService.js`: Llama 3.1 70B 사용
+- `learningService.js`: Gemma 3 12B 사용
 - 세션 생성 시 콘텐츠 기반 학습 목표/요약/추천질문 자동 생성
 - `executionCtx.waitUntil()`로 백그라운드 비동기 처리
 - TB_SESSION에 learning_goal, learning_summary, recommended_questions 저장
@@ -74,7 +74,7 @@
 - 생성 실패 시 콘텐츠 제목 조합으로 폴백
 
 #### 8. 퀴즈 자동 생성
-- `quizService.js`: Llama 3.1 70B 사용
+- `quizService.js`: Gemma 3 12B 사용
 - 콘텐츠 기반 퀴즈 생성 (4지선다 `choice` + OX `ox`)
 - 콘텐츠 등록 시 백그라운드 자동 생성 (`waitUntil`)
 - 퀴즈 재생성 API: `POST /contents/:id/quizzes`, `POST /sessions/:id/quizzes`
@@ -134,8 +134,8 @@
 
 #### 16. 멀티테넌트 구조
 - `wrangler.toml`의 `[env.<tenant_id>]` 섹션으로 테넌트별 리소스 분리
-- 현재 테넌트: dev (로컬), user1 (프로덕션, dev와 DB 공유), user2 (프로덕션, 독립 DB)
-- 각 테넌트별 독립: D1, KV, R2, Vectorize, AI Gateway
+- 현재 테넌트: dev (로컬), user1 (프로덕션, dev와 DB 공유), cloud (프로덕션, 전용 Aurora MySQL)
+- 각 테넌트별 독립: Aurora MySQL DB, KV, R2, Vectorize, AI Gateway
 
 #### 17. AI Gateway 연동
 - Cloudflare AI Gateway (`malgn-chatbot`) 경유
@@ -177,9 +177,9 @@ malgn-chatbot-api/
 │   ├── services/
 │   │   ├── chatService.js       # RAG 파이프라인 (5단계, 2단계 병렬)
 │   │   ├── contentService.js    # 콘텐츠 업로드, 텍스트 추출, 임베딩
-│   │   ├── embeddingService.js  # 768차원 벡터 변환, 청크 분할
-│   │   ├── learningService.js   # 학습 메타데이터 생성 (70B)
-│   │   ├── quizService.js       # 퀴즈 생성 (70B)
+│   │   ├── embeddingService.js  # 1024차원 벡터 변환, 청크 분할
+│   │   ├── learningService.js   # 학습 메타데이터 생성 (Gemma 3 12B)
+│   │   ├── quizService.js       # 퀴즈 생성 (Gemma 3 12B)
 │   │   ├── openaiService.js     # OpenAI 연동 (선택적)
 │   │   └── userService.js       # 사용자 관리 (미사용)
 │   ├── middleware/
@@ -188,10 +188,19 @@ malgn-chatbot-api/
 │   └── utils/
 │       └── utils.js             # 유틸리티 함수
 ├── migrations/
-│   ├── 001_quiz_content_based.sql
-│   ├── 002_session_course_fields.sql
-│   └── 003_session_parent_id.sql
-├── schema.sql                   # 전체 D1 스키마
+│   ├── 001_quiz_content_based.sql      # TB_QUIZ 콘텐츠 기반 리팩토링
+│   ├── 002_session_course_fields.sql   # course_id, course_user_id, lesson_id 추가
+│   ├── 003_session_parent_id.sql       # parent_id 추가 (부모-자식 세션)
+│   ├── 004_content_lesson_id.sql       # TB_CONTENT에 lesson_id 추가
+│   ├── 005_session_quiz_difficulty.sql # quiz_difficulty 추가 (easy/normal/hard)
+│   ├── 005_session_quiz_split.sql      # 퀴즈 설정 분리 (choice_count/ox_count)
+│   ├── 006_quiz_session_id.sql         # TB_QUIZ에 session_id 추가
+│   ├── 006_session_generation_status.sql # 세션 generation_status 추가
+│   ├── 007_session_chat_content_ids.sql # 세션별 chat_content_ids 추가
+│   ├── 008_add_site_id.sql             # 멀티사이트 site_id 추가
+│   ├── 009_ai_log.sql                  # TB_AI_LOG (AI 사용 로그) 추가
+│   └── 010_ai_log_lesson_id.sql        # TB_AI_LOG content_id → lesson_id 변경
+├── schema.mysql.sql             # 전체 Aurora MySQL 스키마
 ├── wrangler.toml                # 멀티테넌트 Cloudflare 설정
 ├── package.json                 # hono, @hono/swagger-ui, jose, pdf-parse, unpdf
 └── docs/                        # 프로젝트 문서
@@ -244,5 +253,5 @@ API_KEY=your-api-key-here
 ### 프로덕션 (Wrangler Secrets)
 ```bash
 wrangler secret put API_KEY --env user1
-wrangler secret put API_KEY --env user2
+wrangler secret put API_KEY --env cloud
 ```

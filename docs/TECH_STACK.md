@@ -22,13 +22,13 @@
 | **프레임워크** | Hono | 경량 웹 프레임워크 |
 | **프론트엔드** | Vanilla JS + Bootstrap 5 | 프레임워크 없는 순수 JS |
 | **번들러** | esbuild | 임베드 위젯 IIFE 번들링 |
-| **데이터베이스** | Cloudflare D1 (SQLite) | 메타데이터 저장 |
-| **벡터 DB** | Cloudflare Vectorize | 768차원, 코사인 유사도 |
+| **데이터베이스** | Aurora MySQL (Cloudflare Hyperdrive 경유) | 메타데이터 저장 |
+| **벡터 DB** | Cloudflare Vectorize | 1024차원, 코사인 유사도 |
 | **KV 캐시** | Cloudflare KV | 세션 캐시 24시간 TTL |
 | **오브젝트 스토리지** | Cloudflare R2 | 파일 저장 (예약) |
-| **AI 모델 (채팅)** | `@cf/meta/llama-3.1-8b-instruct` | RAG 기반 응답 생성 |
-| **AI 모델 (학습/퀴즈)** | `@cf/meta/llama-3.1-70b-instruct` | 메타데이터/퀴즈 생성 |
-| **임베딩 모델** | `@cf/baai/bge-base-en-v1.5` | 768차원 벡터 변환 |
+| **AI 모델 (채팅)** | `@cf/google/gemma-3-12b-it` | RAG 기반 응답 생성 |
+| **AI 모델 (학습/퀴즈)** | `@cf/google/gemma-3-12b-it` | 메타데이터/퀴즈 생성 |
+| **임베딩 모델** | `@cf/baai/bge-m3` | 1024차원 벡터 변환 (다국어) |
 | **AI Gateway** | Cloudflare AI Gateway | 캐시 3600s, 모니터링 |
 | **API 문서** | Swagger UI (`@hono/swagger-ui`) | 자동 API 문서 |
 | **인증** | Bearer 토큰 (API Key) | 단순 API 키 인증 |
@@ -49,8 +49,8 @@
 | **Pages** | Frontend 호스팅 | 정적 파일 호스팅 + CDN, 테넌트별 별도 프로젝트 배포 |
 | **Workers AI** | AI 모델 실행 | LLM, 임베딩 모델을 Workers에서 직접 호출 |
 | **AI Gateway** | AI 트래픽 관리 | 요청 캐싱 (3600s), 속도 제한, 모니터링 |
-| **Vectorize** | 벡터 데이터베이스 | 768차원 코사인 유사도 검색 |
-| **D1** | 일반 데이터베이스 | SQLite 기반, 메타데이터 저장 |
+| **Vectorize** | 벡터 데이터베이스 | 1024차원 코사인 유사도 검색 |
+| **Hyperdrive** | DB 커넥션 풀 | Aurora MySQL 연결 가속/풀링 |
 | **R2** | 파일 저장소 | S3 호환 오브젝트 스토리지 (예약) |
 | **KV** | 캐시 저장소 | 키-값 저장소, 세션 캐시 (24h TTL) |
 
@@ -62,8 +62,9 @@
 binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
-[[d1_databases]]
-binding = "DB"
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "<hyperdrive-config-id>"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -75,7 +76,8 @@ binding = "BUCKET"
 binding = "VECTORIZE"
 ```
 
-코드에서 `env.AI`, `env.DB`, `env.KV`, `env.BUCKET`, `env.VECTORIZE`로 접근합니다.
+코드에서 `env.AI`, `env.HYPERDRIVE`, `env.KV`, `env.BUCKET`, `env.VECTORIZE`로 접근합니다.
+DB 쿼리는 `env.HYPERDRIVE.connectionString`을 사용해 MySQL 클라이언트로 연결합니다.
 
 ---
 
@@ -108,11 +110,11 @@ RAG의 해결책:
        ↓
 3. 청크 분할 (500자 단위, 100자 오버랩, 문장 경계)
        ↓
-4. 임베딩 생성 (bge-base-en-v1.5 → 768차원 벡터)
+4. 임베딩 생성 (bge-m3 → 1024차원 벡터)
        ↓
 5. Vectorize에 저장 (ID: content-{id}-chunk-{n})
        ↓
-6. [백그라운드] 퀴즈 자동 생성 (Llama 3.1 70B)
+6. [백그라운드] 퀴즈 자동 생성 (Gemma 3 12B)
 ```
 
 #### Step 2: 질의응답 (실행 단계)
@@ -120,14 +122,14 @@ RAG의 해결책:
 ```
 1. 사용자 질문: "환불 정책이 어떻게 되나요?"
        ↓
-2. 질문을 768차원 벡터로 변환
+2. 질문을 1024차원 벡터로 변환
        ↓
 3. Vectorize에서 유사 문서 검색 (top 5, 유사도 0.5 이상)
        ↓
 4. XML 태그 구조의 시스템 프롬프트 구축
    <role> + <learning_context> + <rules> + <reference_documents>
        ↓
-5. Llama 3.1 8B로 응답 생성 (AI Gateway 경유, 캐시 3600s)
+5. Gemma 3 12B로 응답 생성 (AI Gateway 경유, 캐시 3600s)
        ↓
 6. 응답 저장 (TB_MESSAGE) 및 반환
 ```
@@ -160,8 +162,8 @@ app.route('/contents', contentRoutes);
 Workers에서 직접 AI 모델을 호출합니다. AI Gateway를 경유하여 캐싱/모니터링됩니다.
 
 ```javascript
-// 채팅용 LLM (8B — 빠른 응답)
-const response = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+// 채팅용 LLM (Gemma 3 12B — 다국어/추론 균형)
+const response = await env.AI.run('@cf/google/gemma-3-12b-it', {
   messages: [
     { role: 'system', content: systemPrompt },
     ...history,
@@ -169,16 +171,16 @@ const response = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
   ]
 });
 
-// 학습/퀴즈 생성용 LLM (70B — 고품질)
-const result = await env.AI.run('@cf/meta/llama-3.1-70b-instruct', {
+// 학습/퀴즈 생성용 LLM (동일 모델 사용)
+const result = await env.AI.run('@cf/google/gemma-3-12b-it', {
   messages: [{ role: 'system', content: prompt }]
 });
 
-// 임베딩 생성
-const { data } = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
+// 임베딩 생성 (다국어)
+const { data } = await env.AI.run('@cf/baai/bge-m3', {
   text: ['변환할 텍스트']
 });
-// data[0] = [0.1, 0.2, ...] (768차원 벡터)
+// data[0] = [0.1, 0.2, ...] (1024차원 벡터)
 ```
 
 #### Vectorize (벡터 데이터베이스)
@@ -189,7 +191,7 @@ const { data } = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
 // 벡터 저장
 await env.VECTORIZE.insert([{
   id: 'content-1-chunk-0',
-  values: embedding,  // 768차원 벡터
+  values: embedding,  // 1024차원 벡터
   metadata: { type: 'content', contentId: 1, contentTitle: '환불 정책' }
 }]);
 
@@ -200,19 +202,24 @@ const results = await env.VECTORIZE.query(queryVector, {
 });
 ```
 
-#### D1 (SQLite 데이터베이스)
+#### Aurora MySQL (Hyperdrive 경유)
 
 ```javascript
+// MySQL 클라이언트로 Hyperdrive connection string 사용
+import { createConnection } from 'mysql2/promise';
+
+const conn = await createConnection(env.HYPERDRIVE.connectionString);
+
 // 데이터 조회 (status 필터 필수)
-const contents = await env.DB
-  .prepare('SELECT * FROM TB_CONTENT WHERE status = 1 ORDER BY created_at DESC')
-  .all();
+const [contents] = await conn.execute(
+  'SELECT * FROM TB_CONTENT WHERE status = 1 ORDER BY created_at DESC'
+);
 
 // 데이터 삽입
-await env.DB
-  .prepare('INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content) VALUES (?, ?, ?, ?, ?)')
-  .bind(name, filename, fileType, fileSize, text)
-  .run();
+await conn.execute(
+  'INSERT INTO TB_CONTENT (content_nm, filename, file_type, file_size, content) VALUES (?, ?, ?, ?, ?)',
+  [name, filename, fileType, fileSize, text]
+);
 ```
 
 #### Swagger UI (API 문서)
@@ -275,9 +282,9 @@ while (true) {
 | 용어 | 영문 | 설명 |
 |------|------|------|
 | 임베딩 | Embedding | 텍스트를 고정 길이 숫자 배열(벡터)로 변환하는 것 |
-| 벡터 | Vector | 숫자들의 배열 (이 프로젝트: 768차원) |
+| 벡터 | Vector | 숫자들의 배열 (이 프로젝트: 1024차원) |
 | 청크 | Chunk | 긴 문서를 작은 조각으로 나눈 것 (500자, 100자 오버랩) |
-| LLM | Large Language Model | 대규모 언어 모델 (Llama, GPT 등) |
+| LLM | Large Language Model | 대규모 언어 모델 (Gemma, GPT 등) |
 | RAG | Retrieval-Augmented Generation | 검색 증강 생성 — 문서 기반 AI 응답 |
 | SSE | Server-Sent Events | 서버→클라이언트 단방향 실시간 스트리밍 |
 | 토큰 | Token | AI가 처리하는 텍스트 단위 |
@@ -296,7 +303,8 @@ while (true) {
 - [Cloudflare Workers](https://developers.cloudflare.com/workers/)
 - [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/)
 - [Cloudflare Vectorize](https://developers.cloudflare.com/vectorize/)
-- [Cloudflare D1](https://developers.cloudflare.com/d1/)
+- [Cloudflare Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
+- [AWS RDS Aurora MySQL](https://aws.amazon.com/rds/aurora/)
 - [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/)
 - [Hono 공식 문서](https://hono.dev/)
 - [esbuild](https://esbuild.github.io/)
