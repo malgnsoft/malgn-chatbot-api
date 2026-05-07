@@ -33,7 +33,7 @@ database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "e72f917cd194472ca6f71f5e4186c3ca"
+id = "068fcc7ceb624716874da9a9b42f5ab8"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -72,7 +72,7 @@ database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[env.user1.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "e72f917cd194472ca6f71f5e4186c3ca"
+id = "068fcc7ceb624716874da9a9b42f5ab8"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"
@@ -87,37 +87,36 @@ binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
 
 # ============================================
-# Tenant: user2
-# 배포: wrangler deploy --env user2
-# URL: malgn-chatbot-api-user2.workers.dev
+# Tenant: cloud (user2에서 명칭 변경 + MySQL/Hyperdrive 전환)
+# 배포: wrangler deploy --env cloud
+# URL: malgn-chatbot-api-cloud.workers.dev
 # ============================================
 
-[env.user2]
-name = "malgn-chatbot-api-user2"
-vars = { ENVIRONMENT = "production", TENANT_ID = "user2" }
+[env.cloud]
+name = "malgn-chatbot-api-cloud"
+vars = { ENVIRONMENT = "production", TENANT_ID = "cloud" }
 
-[env.user2.ai]
+[env.cloud.ai]
 binding = "AI"
 gateway = { id = "malgn-chatbot", cache_ttl = 3600 }
 
-[[env.user2.d1_databases]]
-binding = "DB"
-database_name = "malgn-chatbot-db-user2"
-database_id = "e18e63b7-a10e-4c41-b40d-bb62d6cc3deb"
+[[env.cloud.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "b8b7eab371c0439ca62298b6b05e290f"
 
-[[env.user2.kv_namespaces]]
+[[env.cloud.kv_namespaces]]
 binding = "KV"
-id = "720bdf6a21524611a06d817ed63b9092"
+id = "52cb85d5333b41baa24dfb9600bdf3e7"
 
-[[env.user2.r2_buckets]]
+[[env.cloud.r2_buckets]]
 binding = "BUCKET"
-bucket_name = "malgn-chatbot-files-user2"
+bucket_name = "malgn-chatbot-files-cloud"
 
-[[env.user2.vectorize]]
+[[env.cloud.vectorize]]
 binding = "VECTORIZE"
-index_name = "malgn-chatbot-vectors-user2"
+index_name = "malgn-chatbot-vectors-cloud"
 
-[env.user2.triggers]
+[env.cloud.triggers]
 crons = ["*/5 * * * *"]
 
 # ============================================

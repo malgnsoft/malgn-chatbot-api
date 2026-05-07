@@ -18,8 +18,8 @@
     "@hono/swagger-ui": "^0.2.0",
     "hono": "^4.0.0",
     "jose": "^5.2.0",
+    "mysql2": "3.22.3",
     "pdf-parse": "2.4.5",
-    "pg": "8.20.0",
     "unpdf": "1.4.0"
   },
   "devDependencies": {
