@@ -31,6 +31,7 @@ sessions.get('/', async (c) => {
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '50')));
     const offset = (page - 1) * limit;
     const generationStatus = c.req.query('generationStatus') || null;
+    const includeChildren = c.req.query('include') === 'children';
 
     // 동적 WHERE 절 구성 (콤마 구분 복수 값 지원: pending,processing)
     const validStatuses = ['none', 'pending', 'processing', 'completed', 'failed'];
@@ -81,7 +82,7 @@ sessions.get('/', async (c) => {
       .all();
 
     // 제목: DB 저장된 제목 우선, 없으면 첫 메시지 기반 생성
-    const sessionsWithTitle = (results || []).map(session => {
+    const parentSessions = (results || []).map(session => {
       let title = session.session_nm;
       if (!title) {
         title = session.firstMessage
@@ -91,6 +92,7 @@ sessions.get('/', async (c) => {
       return {
         id: session.id,
         title,
+        parent_id: 0,
         lessonId: session.lesson_id,
         courseId: session.course_id,
         userId: session.user_id,
@@ -106,6 +108,67 @@ sessions.get('/', async (c) => {
         updated_at: session.updated_at
       };
     });
+
+    // include=children: 자식 세션을 함께 조회하여 부모 다음에 평면 배열로 끼워 넣음
+    let sessionsWithTitle = parentSessions;
+    if (includeChildren && parentSessions.length > 0) {
+      const parentIds = parentSessions.map(p => p.id);
+      const placeholders = parentIds.map(() => '?').join(',');
+      const { results: childRows } = await c.env.DB
+        .prepare(`
+          SELECT
+            s.id,
+            s.session_nm,
+            s.parent_id,
+            s.lesson_id,
+            s.course_id,
+            s.course_user_id,
+            s.user_id,
+            s.created_at,
+            s.updated_at,
+            (SELECT content FROM TB_MESSAGE WHERE session_id = s.id AND status = 1 ORDER BY created_at DESC LIMIT 1) as lastMessage,
+            (SELECT COUNT(*) FROM TB_MESSAGE WHERE session_id = s.id AND status = 1) as messageCount
+          FROM TB_SESSION s
+          WHERE s.status = 1 AND s.parent_id IN (${placeholders}) AND s.site_id = ?
+          ORDER BY s.parent_id, s.updated_at DESC
+        `)
+        .bind(...parentIds, siteId)
+        .all();
+
+      const childrenByParent = new Map();
+      for (const row of (childRows || [])) {
+        const list = childrenByParent.get(row.parent_id) || [];
+        const labelParts = [];
+        if (row.course_user_id) labelParts.push(`수강생 ${row.course_user_id}`);
+        else if (row.user_id) labelParts.push(`사용자 ${row.user_id}`);
+        else labelParts.push(`세션 #${row.id}`);
+        list.push({
+          id: row.id,
+          title: row.session_nm || labelParts.join(' '),
+          parent_id: row.parent_id,
+          lessonId: row.lesson_id,
+          courseId: row.course_id,
+          courseUserId: row.course_user_id,
+          userId: row.user_id,
+          lastMessage: row.lastMessage
+            ? row.lastMessage.substring(0, 50) + (row.lastMessage.length > 50 ? '...' : '')
+            : null,
+          messageCount: row.messageCount || 0,
+          created_at: row.created_at,
+          updated_at: row.updated_at
+        });
+        childrenByParent.set(row.parent_id, list);
+      }
+
+      // 부모 → 자식 순서로 평면 배열 구성
+      const flat = [];
+      for (const parent of parentSessions) {
+        flat.push(parent);
+        const children = childrenByParent.get(parent.id) || [];
+        flat.push(...children);
+      }
+      sessionsWithTitle = flat;
+    }
 
     return c.json({
       success: true,
@@ -178,10 +241,24 @@ sessions.post('/', async (c) => {
     // ── 자식 세션 생성 (parent_id > 0) ──
     if (parentId > 0) {
       // 부모 세션 존재 확인
-      const parentSession = await c.env.DB
+      let parentSession = await c.env.DB
         .prepare('SELECT * FROM TB_SESSION WHERE id = ? AND status = 1 AND parent_id = 0 AND site_id = ?')
         .bind(parentId, siteId)
         .first();
+
+      // 부모 세션을 못 찾으면 lesson_id로 활성 부모 자동 매칭
+      if (!parentSession && lessonId) {
+        console.log(`[Session POST] parent_id=${parentId} not found, fallback to lesson_id=${lessonId}`);
+        parentSession = await c.env.DB
+          .prepare('SELECT * FROM TB_SESSION WHERE lesson_id = ? AND status = 1 AND parent_id = 0 AND site_id = ? ORDER BY id DESC LIMIT 1')
+          .bind(lessonId, siteId)
+          .first();
+
+        if (parentSession) {
+          console.log(`[Session POST] lesson_id fallback matched parent id=${parentSession.id}`);
+          parentId = parentSession.id;
+        }
+      }
 
       if (!parentSession) {
         return c.json({

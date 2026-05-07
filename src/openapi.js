@@ -7,12 +7,12 @@ export default {
   },
   servers: [
     {
-      url: 'https://malgn-chatbot-api-user1.malgnsoft.workers.dev',
-      description: 'Production (user1)'
+      url: 'https://malgn-chatbot-api-cloud.malgnsoft.workers.dev',
+      description: 'Production (cloud) — MySQL/Hyperdrive'
     },
     {
-      url: 'https://malgn-chatbot-api-user2.malgnsoft.workers.dev',
-      description: 'Production (user2)'
+      url: 'https://malgn-chatbot-api-user1.malgnsoft.workers.dev',
+      description: 'Production (user1) — MySQL/Hyperdrive (dev 공유)'
     },
     {
       url: 'http://localhost:8787',
@@ -668,14 +668,15 @@ export default {
     '/sessions': {
       get: {
         summary: '세션 목록 조회',
-        description: '부모 세션(parentId = 0)만 반환합니다. 자식 세션은 포함되지 않습니다.',
+        description: '기본은 부모 세션(parentId = 0)만 반환합니다.\n\n`include=children` 쿼리 추가 시: 부모 세션 다음에 그 부모에 속한 자식 세션들을 평면 배열로 함께 반환합니다. 응답의 각 세션 객체에 `parent_id` 필드가 포함되어 0=부모, >0=자식으로 구분합니다. 페이지네이션은 부모 세션 기준입니다.',
         tags: ['Sessions'],
         security: [{ bearerAuth: [] }],
         parameters: [
           { $ref: '#/components/parameters/SiteId' },
-          { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호' },
-          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 }, description: '페이지당 개수' },
-          { name: 'generationStatus', in: 'query', schema: { type: 'string' }, description: '생성 상태 필터 (선택). 허용값: none, completed, failed (콤마 구분 다중 선택 가능)' }
+          { name: 'page', in: 'query', schema: { type: 'integer', default: 1 }, description: '페이지 번호 (부모 세션 기준)' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 }, description: '페이지당 개수 (부모 세션 기준)' },
+          { name: 'generationStatus', in: 'query', schema: { type: 'string' }, description: '생성 상태 필터 (선택). 허용값: none, completed, failed (콤마 구분 다중 선택 가능)' },
+          { name: 'include', in: 'query', schema: { type: 'string', enum: ['children'] }, description: 'children 지정 시 부모 세션에 속한 자식 세션들도 함께 반환' }
         ],
         responses: {
           '200': {
@@ -1520,13 +1521,15 @@ export default {
         properties: {
           id: { type: 'integer' },
           title: { type: 'string', description: '세션 제목 (AI 생성 또는 첫 메시지 기반)' },
+          parent_id: { type: 'integer', description: '부모 세션 ID (0=부모 세션, >0=해당 ID의 자식 세션)', example: 0 },
           lessonId: { type: 'integer', nullable: true, description: 'LMS 차시 ID' },
           courseId: { type: 'integer', nullable: true, description: 'LMS 코스 ID' },
+          courseUserId: { type: 'integer', nullable: true, description: 'LMS 수강생 ID (자식 세션에서만 의미)' },
           userId: { type: 'integer', nullable: true, description: '생성자 ID' },
-          generationStatus: { type: 'string', enum: ['none', 'completed', 'failed'], description: '학습데이터/퀴즈 생성 상태 (동기 처리이므로 completed 또는 failed)' },
-          hasLearningData: { type: 'boolean', description: '학습 데이터(목표/요약/추천질문) 생성 여부' },
-          contentCount: { type: 'integer', description: '연결된 콘텐츠 수' },
-          childCount: { type: 'integer', description: '자식 세션(학습자) 수' },
+          generationStatus: { type: 'string', enum: ['none', 'completed', 'failed'], description: '학습데이터/퀴즈 생성 상태 (부모 세션에만 해당)' },
+          hasLearningData: { type: 'boolean', description: '학습 데이터(목표/요약/추천질문) 생성 여부 (부모 세션에만 해당)' },
+          contentCount: { type: 'integer', description: '연결된 콘텐츠 수 (부모 세션에만 해당)' },
+          childCount: { type: 'integer', description: '자식 세션(학습자) 수 (부모 세션에만 해당)' },
           lastMessage: { type: 'string', nullable: true, description: '마지막 메시지 미리보기 (50자)' },
           messageCount: { type: 'integer' },
           created_at: { type: 'string', format: 'date-time' },
