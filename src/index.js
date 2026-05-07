@@ -28,13 +28,11 @@ const app = new Hono();
 // Global middleware
 app.use('*', logger());
 
-// DB 미들웨어: HYPERDRIVE → PostgreSQL, 없으면 D1 fallback
+// DB 미들웨어: HYPERDRIVE → MySQL, 없으면 D1 fallback
+// connection은 database.js에서 isolate-scoped로 캐시되므로 cleanup 불필요
 app.use('*', async (c, next) => {
   c.env.DB = createDatabase(c.env);
   await next();
-  if (c.env.DB?.cleanup) {
-    c.executionCtx.waitUntil(c.env.DB.cleanup());
-  }
 });
 
 // CORS 설정 - 모든 출처 허용 (개발용)
@@ -93,11 +91,11 @@ export default {
   // Cron Trigger → 비정상 상태 정리 (5분마다)
   async scheduled(event, env) {
     env.DB = createDatabase(env);
-    const isPg = !!env.HYPERDRIVE;
+    const isMySql = !!env.HYPERDRIVE;
 
-    // PG: NOW() - INTERVAL '10 minutes', D1: datetime('now', '-10 minutes')
-    const ago = (min) => isPg
-      ? `NOW() - INTERVAL '${min} minutes'`
+    // MySQL: NOW() - INTERVAL 10 MINUTE, D1: datetime('now', '-10 minutes')
+    const ago = (min) => isMySql
+      ? `NOW() - INTERVAL ${min} MINUTE`
       : `datetime('now', '-${min} minutes')`;
 
     try {
@@ -112,8 +110,6 @@ export default {
       if (r2.meta.changes > 0) console.log(`[Cron] ${r2.meta.changes}개 pending → failed`);
     } catch (e) {
       console.error('[Cron]', e.message);
-    } finally {
-      if (env.DB?.cleanup) await env.DB.cleanup();
     }
   }
 };

@@ -1,78 +1,113 @@
 /**
  * Database Abstraction Layer
  *
- * D1 API 호환 래퍼 — Hyperdrive(PostgreSQL) 또는 D1을 동일한 인터페이스로 사용합니다.
- * Cloudflare 공식 지원 `pg` 드라이버를 사용합니다.
+ * D1 API 호환 래퍼 — Hyperdrive(MySQL) 또는 D1을 동일한 인터페이스로 사용합니다.
+ * Cloudflare 공식 지원 `mysql2/promise` 드라이버를 사용합니다.
  *
  * 사용법:
  *   env.DB.prepare('SELECT * FROM t WHERE id = ?').bind(1).first()
  *   env.DB.prepare('INSERT INTO t (a) VALUES (?)').bind('x').run()
  *   env.DB.batch([stmt1, stmt2])
+ *
+ * 동시성 처리:
+ *   mysql2의 single connection은 동시 query를 처리할 수 없습니다.
+ *   따라서 isolate 단위로 connection pool을 캐시하여 동시 요청을 안전하게 분산합니다.
+ *   pool.query()는 풀에서 자동으로 connection을 꺼내 사용 후 반납합니다.
  */
-import pg from 'pg';
+import mysql from 'mysql2/promise';
 
-// ─── PostgreSQL (Hyperdrive) 래퍼 ──────────────
+// ─── isolate-scoped connection pool ─────────────
+let _pool = null;
+let _poolKey = null;
 
-export class PgDatabase {
-  constructor(hyperdrive) {
-    this._hyperdrive = hyperdrive;
-    this._client = null;
+async function getPool(hyperdrive) {
+  const key = `${hyperdrive.host}:${hyperdrive.port}/${hyperdrive.database}`;
+
+  // 다른 환경의 풀이면 폐기 후 재생성
+  if (_pool && _poolKey !== key) {
+    const old = _pool;
+    _pool = null;
+    _poolKey = null;
+    try { await old.end(); } catch { /* ignore */ }
   }
 
-  async getClient() {
-    if (!this._client) {
-      this._client = new pg.Client(this._hyperdrive.connectionString);
-      await this._client.connect();
-    }
-    return this._client;
+  if (!_pool) {
+    _pool = mysql.createPool({
+      host: hyperdrive.host,
+      port: hyperdrive.port,
+      user: hyperdrive.user,
+      password: hyperdrive.password,
+      database: hyperdrive.database,
+      // Cloudflare Workers 환경 필수
+      disableEval: true,
+      // 풀 설정
+      waitForConnections: true,
+      connectionLimit: 6,
+      queueLimit: 0,
+    });
+    _poolKey = key;
+  }
+  return _pool;
+}
+
+function isFatalConnectionError(err) {
+  if (!err) return false;
+  const code = err.code || '';
+  return (
+    err.fatal === true ||
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'ER_SERVER_SHUTDOWN'
+  );
+}
+
+// ─── MySQL (Hyperdrive) 래퍼 ───────────────────
+
+export class MySqlDatabase {
+  constructor(hyperdrive) {
+    this._hyperdrive = hyperdrive;
+  }
+
+  // 호환용: pool 반환 (직접 사용은 권장하지 않음, batch 트랜잭션 등에서만 사용)
+  async getConn() {
+    return getPool(this._hyperdrive);
   }
 
   prepare(sql) {
-    return new PgPreparedStatement(this, sql);
+    return new MySqlPreparedStatement(this, sql);
   }
 
   async batch(statements) {
-    const client = await this.getClient();
-    await client.query('BEGIN');
+    const pool = await getPool(this._hyperdrive);
+    const conn = await pool.getConnection();
     try {
+      await conn.beginTransaction();
       const results = [];
       for (const stmt of statements) {
-        const result = await stmt._execute(client);
+        const result = await stmt._execute(conn);
         results.push(result);
       }
-      await client.query('COMMIT');
+      await conn.commit();
       return results;
     } catch (error) {
-      await client.query('ROLLBACK');
+      try { await conn.rollback(); } catch { /* ignore */ }
       throw error;
+    } finally {
+      conn.release();
     }
   }
 
-  async cleanup() {
-    if (this._client) {
-      try { await this._client.end(); } catch { /* ignore */ }
-      this._client = null;
-    }
-  }
-}
-
-// ─── D1 호환 ?→$N 변환 ────────────────────────
-
-/**
- * D1 스타일 ? 플레이스홀더를 PostgreSQL $1, $2, ... 로 변환
- */
-function convertPlaceholders(sql) {
-  let i = 0;
-  return sql.replace(/\?/g, () => `$${++i}`);
+  // No-op: pool은 isolate-scoped로 재사용. isolate 종료 시 자동 정리.
+  async cleanup() { /* no-op */ }
 }
 
 // ─── Prepared Statement ────────────────────────
 
-class PgPreparedStatement {
+class MySqlPreparedStatement {
   constructor(db, sql) {
     this.db = db;
-    this._originalSql = sql;
-    this._pgSql = convertPlaceholders(sql);
+    this._sql = sql;
     this.params = [];
   }
 
@@ -81,64 +116,55 @@ class PgPreparedStatement {
     return this;
   }
 
-  async _execute(client) {
-    client = client || await this.db.getClient();
-    return client.query(this._pgSql, this.params);
+  /**
+   * @param {*} conn — 명시적 connection (트랜잭션 등). 없으면 pool에서 자동 처리.
+   */
+  async _execute(conn) {
+    if (conn) {
+      // batch 트랜잭션 등에서 명시적 connection
+      return conn.query(this._sql, this.params);
+    }
+    const pool = await this.db.getConn();
+    try {
+      return await pool.query(this._sql, this.params);
+    } catch (e) {
+      // pool은 stale connection을 자체 처리하지만 fatal 에러 시 1회 재시도
+      if (isFatalConnectionError(e)) {
+        return pool.query(this._sql, this.params);
+      }
+      throw e;
+    }
   }
 
   async all() {
-    const result = await this._execute();
-    return { results: result.rows };
+    const [rows] = await this._execute();
+    return { results: rows };
   }
 
   async first() {
-    const result = await this._execute();
-    return result.rows[0] || null;
+    const [rows] = await this._execute();
+    return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
   }
 
   async run() {
-    const result = await this._execute();
-    // INSERT ... RETURNING id 가 아닌 경우 lastInsertId 불가
-    // PostgreSQL은 INSERT 후 RETURNING 절이 필요하지만
-    // D1 호환을 위해 INSERT 쿼리에 RETURNING id를 자동 추가
-    let lastRowId = 0;
-    if (result.rows && result.rows.length > 0 && result.rows[0].id !== undefined) {
-      lastRowId = result.rows[0].id;
-    }
+    const [result] = await this._execute();
     return {
       success: true,
       meta: {
-        last_row_id: lastRowId,
-        changes: result.rowCount || 0,
-        served_by: 'postgresql'
+        last_row_id: result?.insertId || 0,
+        changes: result?.affectedRows || 0,
+        served_by: 'mysql'
       }
     };
   }
 }
 
-// ─── INSERT RETURNING 자동 추가 ────────────────
-
-const originalPrepare = PgDatabase.prototype.prepare;
-PgDatabase.prototype.prepare = function(sql) {
-  // INSERT 문에 RETURNING id 자동 추가 (D1 last_row_id 호환)
-  if (/^\s*INSERT\s+INTO/i.test(sql) && !/RETURNING/i.test(sql)) {
-    sql = sql.replace(/;?\s*$/, ' RETURNING id');
-  }
-  return originalPrepare.call(this, sql);
-};
-
-// ─── Cron용 MySQL→PG 문법 변환 ─────────────────
-// DATE_SUB(NOW(), INTERVAL 10 MINUTE) → NOW() - INTERVAL '10 minutes'
-// (MySQL 문법이 코드에 남아있을 수 있으므로 자동 변환)
-
-const originalConvert = convertPlaceholders;
-
 // ─── 팩토리 ────────────────────────────────────
 
 export function createDatabase(env) {
   if (env.HYPERDRIVE) {
-    return new PgDatabase(env.HYPERDRIVE);
+    return new MySqlDatabase(env.HYPERDRIVE);
   }
-  // D1 fallback (user2 등 아직 Hyperdrive 미설정 테넌트)
+  // D1 fallback (Hyperdrive 미설정 테넌트)
   return env.D1_DB || env.DB;
 }
