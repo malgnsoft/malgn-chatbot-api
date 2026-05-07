@@ -11,6 +11,10 @@ export default {
       description: 'Production (cloud) — MySQL/Hyperdrive'
     },
     {
+      url: 'https://malgn-chatbot-api-secbiz.malgnsoft.workers.dev',
+      description: 'Production (secbiz) — MySQL/Hyperdrive'
+    },
+    {
       url: 'https://malgn-chatbot-api-user1.malgnsoft.workers.dev',
       description: 'Production (user1) — MySQL/Hyperdrive (dev 공유)'
     },

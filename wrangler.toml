@@ -120,6 +120,39 @@ index_name = "malgn-chatbot-vectors-cloud"
 crons = ["*/5 * * * *"]
 
 # ============================================
+# Tenant: secbiz
+# 배포: wrangler deploy --env secbiz
+# URL: malgn-chatbot-api-secbiz.workers.dev
+# ============================================
+
+[env.secbiz]
+name = "malgn-chatbot-api-secbiz"
+vars = { ENVIRONMENT = "production", TENANT_ID = "secbiz" }
+
+[env.secbiz.ai]
+binding = "AI"
+gateway = { id = "malgn-chatbot-secbiz", cache_ttl = 3600 }
+
+[[env.secbiz.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "a317d2e2afff4de6bd2449092380bd38"
+
+[[env.secbiz.kv_namespaces]]
+binding = "KV"
+id = "95bbe07be729482488e4e1c95f344514"
+
+[[env.secbiz.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files-secbiz"
+
+[[env.secbiz.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors-secbiz"
+
+[env.secbiz.triggers]
+crons = ["*/5 * * * *"]
+
+# ============================================
 # 새 테넌트 추가 방법
 # ============================================
 #
