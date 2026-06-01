@@ -51,6 +51,10 @@ index_name = "malgn-chatbot-vectors"
 [triggers]
 crons = ["*/5 * * * *"]
 
+# Smart Placement (DB 가까운 콜로에 워커 자동 배치)
+[placement]
+mode = "smart"
+
 # ============================================
 # Tenant: user1 (기존 리소스 사용)
 # 배포: wrangler deploy --env user1
@@ -86,6 +90,9 @@ bucket_name = "malgn-chatbot-files"
 binding = "VECTORIZE"
 index_name = "malgn-chatbot-vectors"
 
+[env.user1.placement]
+mode = "smart"
+
 # ============================================
 # Tenant: cloud (user2에서 명칭 변경 + MySQL/Hyperdrive 전환)
 # 배포: wrangler deploy --env cloud
@@ -119,6 +126,9 @@ index_name = "malgn-chatbot-vectors-cloud"
 [env.cloud.triggers]
 crons = ["*/5 * * * *"]
 
+[env.cloud.placement]
+mode = "smart"
+
 # ============================================
 # Tenant: secbiz
 # 배포: wrangler deploy --env secbiz
@@ -151,6 +161,9 @@ index_name = "malgn-chatbot-vectors-secbiz"
 
 [env.secbiz.triggers]
 crons = ["*/5 * * * *"]
+
+[env.secbiz.placement]
+mode = "smart"
 
 # ============================================
 # 새 테넌트 추가 방법

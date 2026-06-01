@@ -113,6 +113,9 @@ index_name = "malgn-chatbot-vectors-${TENANT_ID}"
 
 [env.${TENANT_ID}.triggers]
 crons = ["*/5 * * * *"]
+
+[env.${TENANT_ID}.placement]
+mode = "smart"
 EOF
 echo ""
 
