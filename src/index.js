@@ -65,6 +65,39 @@ app.get('/health', (c) => {
   });
 });
 
+// DB 연결 진단 (Hyperdrive/D1 어느 쪽이 잡혔는지 + 실제 쿼리 동작 확인)
+app.get('/health/db', async (c) => {
+  const env = c.env;
+  const hasHyperdrive = !!env.HYPERDRIVE;
+  const hasD1 = !!env.D1_DB;
+  const driver = hasHyperdrive ? 'mysql-hyperdrive' : (hasD1 ? 'd1' : 'none');
+
+  const result = {
+    tenant: env.TENANT_ID || 'unknown',
+    driver,
+    hasHyperdrive,
+    hasD1,
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    // env.DB는 dbMiddleware에서 createDatabase()로 주입됨
+    const ping = await env.DB.prepare(
+      hasHyperdrive
+        ? "SELECT 1 AS ok, NOW() AS db_now, VERSION() AS db_version"
+        : "SELECT 1 AS ok, datetime('now') AS db_now, 'd1-sqlite' AS db_version"
+    ).first();
+    result.connected = !!ping;
+    result.dbNow = ping?.db_now ?? ping?.DB_NOW ?? null;
+    result.dbVersion = ping?.db_version ?? ping?.DB_VERSION ?? null;
+  } catch (e) {
+    result.connected = false;
+    result.error = e.message;
+  }
+
+  return c.json(result, result.connected ? 200 : 500);
+});
+
 // API Documentation
 app.get('/openapi.json', (c) => c.json(openApiSpec));
 app.get('/docs', swaggerUI({ url: '/openapi.json' }));
