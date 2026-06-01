@@ -37,7 +37,7 @@ echo ""
 
 # 1. Hyperdrive 생성 (MySQL 연결)
 echo "[1/4] Creating Hyperdrive (MySQL connection)..."
-HD_OUTPUT=$(wrangler hyperdrive create "malgn-chatbot-hyperdrive-${TENANT_ID}" \
+HD_OUTPUT=$(wrangler hyperdrive create "ai-tutor-${TENANT_ID}-prv" \
   --connection-string="${MYSQL_URL}" 2>&1)
 HD_ID=$(echo "$HD_OUTPUT" | grep -oE 'id = "[^"]+"' | head -1 | cut -d'"' -f2)
 if [ -z "$HD_ID" ]; then
