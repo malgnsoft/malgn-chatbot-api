@@ -33,7 +33,7 @@ database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "068fcc7ceb624716874da9a9b42f5ab8"
+id = "bea83465134143188a193a19c0470c1e"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -76,7 +76,7 @@ database_id = "43ec4ff1-c894-43e0-bcee-2affef883e83"
 
 [[env.user1.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "068fcc7ceb624716874da9a9b42f5ab8"
+id = "bea83465134143188a193a19c0470c1e"
 
 [[env.user1.kv_namespaces]]
 binding = "KV"
@@ -109,7 +109,7 @@ gateway = { id = "malgn-chatbot-cloud", cache_ttl = 3600 }
 
 [[env.cloud.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "b8b7eab371c0439ca62298b6b05e290f"
+id = "ecb356e8baad4644ad1d18effa112187"
 
 [[env.cloud.kv_namespaces]]
 binding = "KV"
@@ -145,7 +145,7 @@ gateway = { id = "malgn-chatbot-secbiz", cache_ttl = 3600 }
 
 [[env.secbiz.hyperdrive]]
 binding = "HYPERDRIVE"
-id = "a317d2e2afff4de6bd2449092380bd38"
+id = "0a45910cbec14a59afcf64f6c4c943eb"
 
 [[env.secbiz.kv_namespaces]]
 binding = "KV"
