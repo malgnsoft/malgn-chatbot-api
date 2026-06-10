@@ -166,6 +166,78 @@ crons = ["*/5 * * * *"]
 mode = "smart"
 
 # ============================================
+# Tenant: rfd
+# 배포: wrangler deploy --env rfd
+# URL: malgn-chatbot-api-rfd.workers.dev
+# ============================================
+
+[env.rfd]
+name = "malgn-chatbot-api-rfd"
+vars = { ENVIRONMENT = "production", TENANT_ID = "rfd" }
+
+[env.rfd.ai]
+binding = "AI"
+gateway = { id = "malgn-chatbot-rfd", cache_ttl = 3600 }
+
+[[env.rfd.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "fa757581c99847ae8d10b3ad29f83af3"
+
+[[env.rfd.kv_namespaces]]
+binding = "KV"
+id = "08db4feec3e3486890b0d07c3b828a82"
+
+[[env.rfd.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files-rfd"
+
+[[env.rfd.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors-rfd"
+
+[env.rfd.triggers]
+crons = ["*/5 * * * *"]
+
+[env.rfd.placement]
+mode = "smart"
+
+# ============================================
+# Tenant: sol
+# 배포: wrangler deploy --env sol
+# URL: malgn-chatbot-api-sol.workers.dev
+# ============================================
+
+[env.sol]
+name = "malgn-chatbot-api-sol"
+vars = { ENVIRONMENT = "production", TENANT_ID = "sol" }
+
+[env.sol.ai]
+binding = "AI"
+gateway = { id = "malgn-chatbot-sol", cache_ttl = 3600 }
+
+[[env.sol.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "55e9c7acd7474f58a2862544c6e29e7b"
+
+[[env.sol.kv_namespaces]]
+binding = "KV"
+id = "7cd4ccf43a3340faba6eb680cd508e59"
+
+[[env.sol.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files-sol"
+
+[[env.sol.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors-sol"
+
+[env.sol.triggers]
+crons = ["*/5 * * * *"]
+
+[env.sol.placement]
+mode = "smart"
+
+# ============================================
 # 새 테넌트 추가 방법
 # ============================================
 #
