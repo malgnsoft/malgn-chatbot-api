@@ -12,11 +12,13 @@ export class AiLogService {
     this._lessonId = null;
 
     // 모델별 뉴런 환산 계수 (1M 토큰당 뉴런)
-    // AI Gateway 실제 비용에서 역산 (2026-04-14 기준)
+    // AI Gateway 실제 비용에서 역산 (2026-06-10 기준)
     this.neuronRates = {
-      // Gemma 3 12B (채팅/학습/퀴즈)
+      // Gemma 4 26B A4B IT (채팅/학습/퀴즈, 현재 사용 중) — $0.10 입력 / $0.30 출력 per M
+      '@cf/google/gemma-4-26b-a4b-it': { input: 9091, output: 27273 },
+      // Gemma 3 12B (이전 모델) — $0.35 입력 / $0.56 출력 per M
       '@cf/google/gemma-3-12b-it': { input: 32000, output: 50000 },
-      // Mistral Small 3.1 24B (Gemma 대비 약 2배 추정)
+      // Mistral Small 3.1 24B
       '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 45000, output: 70000 },
       // BGE-M3 (임베딩) - Gateway에서 무료 표시, 최소 뉴런 소비
       '@cf/baai/bge-m3': { input: 130, output: 0 },

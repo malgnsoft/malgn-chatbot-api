@@ -18,8 +18,8 @@ export class ChatService {
     this.embeddingService = new EmbeddingService(env, siteId);
     this.quizService = new QuizService(env, siteId);
     this.aiLogService = new AiLogService(env, siteId);
-    // Workers AI 사용 (Gemma 3 12B - Google, 다국어 우수)
-    this.llmModel = '@cf/google/gemma-3-12b-it';
+    // Workers AI 사용 (Gemma 4 26B A4B IT - Google, 100+ 언어, 256K 컨텍스트)
+    this.llmModel = '@cf/google/gemma-4-26b-a4b-it';
 
     // 기본 AI 설정
     this.persona = '당신은 친절하고 전문적인 AI 튜터입니다.';
