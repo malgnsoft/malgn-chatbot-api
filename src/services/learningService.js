@@ -14,7 +14,7 @@ export class LearningService {
     this.aiLogService = new AiLogService(env, siteId);
     this.embeddingService = new EmbeddingService(env, siteId);
     // Gemma 4 26B A4B IT - Google, 100+ 언어, 256K 컨텍스트, $0.10/$0.30 per M
-    this.model = '@cf/google/gemma-4-26b-a4b-it';
+    this.model = '@cf/google/gemma-3-12b-it';
   }
 
   setContext(sessionId, lessonId) {
