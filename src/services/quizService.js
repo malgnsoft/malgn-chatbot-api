@@ -15,7 +15,7 @@ export class QuizService {
     this.siteId = siteId;
     this.aiLogService = new AiLogService(env, siteId);
     // Gemma 4 26B A4B IT - Google, 100+ 언어, 256K 컨텍스트
-    this.model = '@cf/google/gemma-3-12b-it';
+    this.model = '@cf/mistralai/mistral-small-3.1-24b-instruct';
   }
 
   setContext(sessionId, lessonId) {

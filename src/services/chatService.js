@@ -19,7 +19,7 @@ export class ChatService {
     this.quizService = new QuizService(env, siteId);
     this.aiLogService = new AiLogService(env, siteId);
     // Workers AI 사용 (Gemma 4 26B A4B IT - Google, 100+ 언어, 256K 컨텍스트)
-    this.llmModel = '@cf/google/gemma-3-12b-it';
+    this.llmModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 
     // 기본 AI 설정
     this.persona = '당신은 친절하고 전문적인 AI 튜터입니다.';

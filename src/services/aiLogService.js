@@ -14,7 +14,9 @@ export class AiLogService {
     // 모델별 뉴런 환산 계수 (1M 토큰당 뉴런)
     // AI Gateway 실제 비용에서 역산 (2026-06-10 기준)
     this.neuronRates = {
-      // Gemma 4 26B A4B IT (채팅/학습/퀴즈, 현재 사용 중) — $0.10 입력 / $0.30 출력 per M
+      // OpenAI GPT-4o-mini (현재 사용 중) — $0.15 입력 / $0.60 출력 per M
+      'openai/gpt-4o-mini': { input: 13636, output: 54545 },
+      // Gemma 4 26B A4B IT — $0.10 입력 / $0.30 출력 per M
       '@cf/google/gemma-4-26b-a4b-it': { input: 9091, output: 27273 },
       // Gemma 3 12B (이전 모델) — $0.35 입력 / $0.56 출력 per M
       '@cf/google/gemma-3-12b-it': { input: 32000, output: 50000 },

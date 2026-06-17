@@ -173,7 +173,6 @@ chat.post('/stream', async (c) => {
       let fullResponse = '';
       let buffer = '';
       let firstToken = true;
-      let rawSamples = []; // DEBUG: 처음 3개 SSE 데이터 라인 샘플
 
       while (true) {
         const { done, value } = await reader.read();
@@ -191,7 +190,6 @@ chat.post('/stream', async (c) => {
 
           try {
             const parsed = JSON.parse(dataStr);
-            if (rawSamples.length < 3) rawSamples.push(dataStr.substring(0, 200));
             // Workers AI 포맷: { response: "..." }
             // OpenAI 호환 포맷 (Gemma 4 등): { choices: [{ delta: { content: "..." } }] }
             const token = parsed.response
@@ -212,7 +210,6 @@ chat.post('/stream', async (c) => {
 
       console.log(`[PERF] LLM 전체: ${Date.now() - llmStart}ms, 총 요청: ${Date.now() - streamStart}ms`);
       console.log(`[DEBUG] Full response length: ${fullResponse.length}, preview: ${fullResponse.substring(0, 100)}`);
-      console.log(`[DEBUG] Raw stream samples (first 3):`, JSON.stringify(rawSamples));
 
       // 빈 응답 처리
       if (!fullResponse || fullResponse.trim().length === 0) {
