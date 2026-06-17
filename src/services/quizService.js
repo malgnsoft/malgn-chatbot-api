@@ -373,6 +373,7 @@ export class QuizService {
           { role: 'user', content: userPrompt }
         ],
         max_tokens: 2048,
+        max_completion_tokens: 2048,
         temperature: 0.7
       },
       {
@@ -391,7 +392,7 @@ export class QuizService {
       latencyMs: Date.now() - startTime
     }).catch(() => {});
 
-    return result.response || '';
+    return result?.response || result?.choices?.[0]?.message?.content || '';
   }
 
   /**

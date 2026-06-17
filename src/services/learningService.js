@@ -270,6 +270,7 @@ ${context}`;
             { role: 'user', content: userPrompt }
           ],
           max_tokens: 2048,
+          max_completion_tokens: 2048,
           temperature: temperature
         },
         {
@@ -290,7 +291,8 @@ ${context}`;
         latencyMs: Date.now() - startTime
       }).catch(() => {});
 
-      if (!result || !result.response) {
+      const responseText = result?.response || result?.choices?.[0]?.message?.content || '';
+      if (!result || !responseText) {
         console.error('[LearningService] Workers AI failed: no response', result);
         const defaultSessionNm = contentTitles.length > 0
           ? contentTitles.slice(0, 2).join(', ') + (contentTitles.length > 2 ? ' 외' : '')
@@ -298,7 +300,7 @@ ${context}`;
         return { sessionNm: defaultSessionNm, learningGoal: null, learningSummary: null, recommendedQuestions: null };
       }
 
-      const content = result.response || '{}';
+      const content = responseText || '{}';
 
       // JSON 파싱 (LaTeX 이스케이프 보정)
       const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -431,6 +433,7 @@ ${truncatedContext}`;
             { role: 'user', content: userPrompt }
           ],
           max_tokens: 2048,
+          max_completion_tokens: 2048,
           temperature: 0.2
         },
         { gateway: { id: 'malgn-chatbot', skipCache: true } }
@@ -444,9 +447,10 @@ ${truncatedContext}`;
         latencyMs: Date.now() - startTime
       }).catch(() => {});
 
-      if (!result?.response) return questions;
+      const responseText = result?.response || result?.choices?.[0]?.message?.content || '';
+      if (!responseText) return questions;
 
-      const jsonMatch = result.response.match(/\[[\s\S]*\]/);
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       const answers = JSON.parse(jsonMatch ? jsonMatch[0] : '[]');
 
       // 답변 매핑

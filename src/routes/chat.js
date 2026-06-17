@@ -190,13 +190,19 @@ chat.post('/stream', async (c) => {
 
           try {
             const parsed = JSON.parse(dataStr);
-            if (parsed.response) {
+            // Workers AI 포맷: { response: "..." }
+            // OpenAI 호환 포맷 (Gemma 4 등): { choices: [{ delta: { content: "..." } }] }
+            const token = parsed.response
+              || parsed.choices?.[0]?.delta?.content
+              || parsed.choices?.[0]?.message?.content
+              || '';
+            if (token) {
               if (firstToken) {
                 console.log(`[PERF] 첫 토큰까지: ${Date.now() - llmStart}ms (요청 시작부터: ${Date.now() - streamStart}ms)`);
                 firstToken = false;
               }
-              fullResponse += parsed.response;
-              await stream.writeSSE({ event: 'token', data: JSON.stringify({ response: parsed.response }) });
+              fullResponse += token;
+              await stream.writeSSE({ event: 'token', data: JSON.stringify({ response: token }) });
             }
           } catch { /* skip invalid JSON */ }
         }

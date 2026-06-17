@@ -568,13 +568,15 @@ export class ChatService {
       const result = await this.env.AI.run(this.llmModel, {
         messages,
         max_tokens: this.maxTokens,
+        max_completion_tokens: this.maxTokens,
         temperature: this.temperature,
         top_p: this.topP
       }, {
         gateway: { id: 'malgn-chatbot', skipCache: true }
       });
 
-      if (result && result.response) {
+      const responseText = result?.response || result?.choices?.[0]?.message?.content || '';
+      if (result && responseText) {
         // AI 사용 로그
         this.aiLogService.log({
           sessionId,
@@ -587,7 +589,7 @@ export class ChatService {
 
         // 잘림 감지 → 자동 요약 재생성
         const finalResponse = await this.handleTruncation({
-          rawResponse: result.response,
+          rawResponse: responseText,
           finishReason: result.finish_reason || result.choices?.[0]?.finish_reason || null,
           question,
           systemPrompt,
@@ -635,6 +637,7 @@ export class ChatService {
       const summaryResult = await this.env.AI.run(this.llmModel, {
         messages: summaryMessages,
         max_tokens: this.maxTokens,
+        max_completion_tokens: this.maxTokens,
         temperature: 0.2,
         top_p: this.topP
       }, {
@@ -650,9 +653,10 @@ export class ChatService {
         latencyMs: Date.now() - startTime
       }).catch(() => {});
 
-      if (summaryResult && summaryResult.response) {
-        console.log('[ChatService] Summary regenerated, length:', summaryResult.response.length);
-        return summaryResult.response;
+      const summaryText = summaryResult?.response || summaryResult?.choices?.[0]?.message?.content || '';
+      if (summaryResult && summaryText) {
+        console.log('[ChatService] Summary regenerated, length:', summaryText.length);
+        return summaryText;
       }
 
       // 요약 실패 시 원본 반환 (sanitize에서 트리밍됨)
@@ -995,6 +999,7 @@ export class ChatService {
     const result = await this.env.AI.run(this.llmModel, {
       messages,
       max_tokens: this.maxTokens,
+      max_completion_tokens: this.maxTokens,
       temperature: this.temperature,
       top_p: this.topP,
       stream: true
