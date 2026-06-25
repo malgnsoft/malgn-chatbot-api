@@ -238,6 +238,78 @@ crons = ["*/5 * * * *"]
 mode = "smart"
 
 # ============================================
+# Tenant: global (글로벌LMS 용)
+# 배포: wrangler deploy --env global
+# URL: malgn-chatbot-api-global.workers.dev
+# ============================================
+
+[env.global]
+name = "malgn-chatbot-api-global"
+vars = { ENVIRONMENT = "production", TENANT_ID = "global" }
+
+[env.global.ai]
+binding = "AI"
+gateway = { id = "malgn-chatbot-global", cache_ttl = 3600 }
+
+[[env.global.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "5209d677a4254cbd84a8cbe423cf03cd"
+
+[[env.global.kv_namespaces]]
+binding = "KV"
+id = "2fe56fcec2ab4e6cb4ee15d8363da50e"
+
+[[env.global.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files-global"
+
+[[env.global.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors-global"
+
+[env.global.triggers]
+crons = ["*/5 * * * *"]
+
+[env.global.placement]
+mode = "smart"
+
+# ============================================
+# Tenant: gover (공공기관 용)
+# 배포: wrangler deploy --env gover
+# URL: malgn-chatbot-api-gover.workers.dev
+# ============================================
+
+[env.gover]
+name = "malgn-chatbot-api-gover"
+vars = { ENVIRONMENT = "production", TENANT_ID = "gover" }
+
+[env.gover.ai]
+binding = "AI"
+gateway = { id = "malgn-chatbot-gover", cache_ttl = 3600 }
+
+[[env.gover.hyperdrive]]
+binding = "HYPERDRIVE"
+id = "ba402d93606f43ea8d1a5c12403fe2bd"
+
+[[env.gover.kv_namespaces]]
+binding = "KV"
+id = "af7a6b6baeb14241add6495f271a5764"
+
+[[env.gover.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "malgn-chatbot-files-gover"
+
+[[env.gover.vectorize]]
+binding = "VECTORIZE"
+index_name = "malgn-chatbot-vectors-gover"
+
+[env.gover.triggers]
+crons = ["*/5 * * * *"]
+
+[env.gover.placement]
+mode = "smart"
+
+# ============================================
 # 새 테넌트 추가 방법
 # ============================================
 #
